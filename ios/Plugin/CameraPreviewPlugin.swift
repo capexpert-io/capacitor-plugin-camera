@@ -27,7 +27,6 @@ public class CameraPreviewPlugin: CAPPlugin, AVCaptureVideoDataOutputSampleBuffe
     var scanRegion:ScanRegion! = nil
     @objc func initialize(_ call: CAPPluginCall) {
         // Initialize a camera view for previewing video.
-        NotificationCenter.default.addObserver(self, selector: #selector(rotated), name: UIDevice.orientationDidChangeNotification, object: nil)
         DispatchQueue.main.sync {
             self.previewView = PreviewView.init(frame: (bridge?.viewController?.view.bounds)!)
             self.webView!.superview!.insertSubview(self.previewView, belowSubview: self.webView!)
@@ -53,16 +52,72 @@ public class CameraPreviewPlugin: CAPPlugin, AVCaptureVideoDataOutputSampleBuffe
     
     @objc func startCamera(_ call: CAPPluginCall) {
         makeWebViewTransparent()
-        if self.captureSession != nil {
-            DispatchQueue.main.sync {
-                self.captureSession.startRunning()
-                triggerOnPlayed()
-            }
-        }else{
+        
+        guard let captureSession = self.captureSession else {
             call.reject("Camera not initialized")
             return
         }
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            captureSession.startRunning()
+            DispatchQueue.main.async {
+                self.triggerOnPlayed()
+            }
+        }
+
         call.resolve()
+    }
+
+    func destroyCaptureSession() {
+        guard let session = self.captureSession else { return }
+
+        // Stop the session
+        if session.isRunning {
+            session.stopRunning()
+        }
+
+        // Remove all inputs
+        for input in session.inputs {
+            session.removeInput(input)
+        }
+
+        // Remove all outputs
+        for output in session.outputs {
+            session.removeOutput(output)
+        }
+
+        // Release session
+        self.captureSession = nil
+        initializeCaptureSession(enableVideoRecording: false)
+    }
+
+    func getCameraAspectRatio() -> CGFloat? {
+        guard let videoDevice = self.videoInput?.device else {
+            // call.reject("Video device not available")
+          return 1;
+        }
+        
+        // Retrieve the format description from the camera's active format.
+        let formatDesc = videoDevice.activeFormat.formatDescription
+        let dimensions = CMVideoFormatDescriptionGetDimensions(formatDesc)
+        let camWidth = CGFloat(dimensions.width)
+        let camHeight = CGFloat(dimensions.height)
+
+        return camWidth / camHeight // Aspect Ratio (height / width)
+    }
+
+    func updatePreviewLayerFrame() {
+      // Make sure you can get the view controller's view
+          guard let previewView = self.bridge?.viewController?.view,
+                let aspectRatio = getCameraAspectRatio() else { return }
+
+        let screenWidth = previewView.bounds.width
+        let previewHeight = screenWidth * aspectRatio // Calculate height
+
+        let screenHeight = previewView.bounds.height
+        let previewY = (screenHeight - previewHeight) * 0.4 // Center vertically
+      
+        self.previewView.frame = CGRect(x: 0, y: previewY, width: screenWidth, height: previewHeight)
     }
     
     func initializeCaptureSession(enableVideoRecording:Bool){
@@ -95,11 +150,11 @@ public class CameraPreviewPlugin: CAPPlugin, AVCaptureVideoDataOutputSampleBuffe
                     self.captureSession.addOutput(videoOutput)
                 }
                 
-                let interfaceOrientation = UIApplication.shared.windows.first?.windowScene?.interfaceOrientation
-                if (interfaceOrientation == .landscapeLeft) {
-                    self.previewView.videoPreviewLayer.connection?.videoOrientation = .landscapeLeft
-                } else if (interfaceOrientation == .landscapeRight) {
-                    self.previewView.videoPreviewLayer.connection?.videoOrientation = .landscapeRight
+                if let connection = self.previewView.videoPreviewLayer.connection {
+                    connection.videoOrientation = .portrait
+                }
+                if let videoConnection = self.videoOutput.connection(with: .video) {
+                    videoConnection.videoOrientation = .portrait
                 }
                 
                 self.photoOutput = AVCapturePhotoOutput()
@@ -114,8 +169,10 @@ public class CameraPreviewPlugin: CAPPlugin, AVCaptureVideoDataOutputSampleBuffe
                         self.captureSession.addOutput(movieFileOutput)
                     }
                 }
-                
-                self.captureSession.sessionPreset = AVCaptureSession.Preset.hd1280x720
+
+                self.captureSession.sessionPreset = AVCaptureSession.Preset.photo
+              
+                updatePreviewLayerFrame()
                 
                 var queue:DispatchQueue
                 queue = DispatchQueue(label: "queue")
@@ -200,18 +257,8 @@ public class CameraPreviewPlugin: CAPPlugin, AVCaptureVideoDataOutputSampleBuffe
                 print("Failed to create bitmap from image.")
                 return
             }
-            var degree = 0;
-            if UIDevice.current.orientation == UIDeviceOrientation.portrait || UIDevice.current.orientation == UIDeviceOrientation.faceDown {
-                if connection.videoOrientation == AVCaptureVideoOrientation.landscapeRight || connection.videoOrientation == AVCaptureVideoOrientation.landscapeLeft  {
-                    degree = 90
-                }
-            }else if UIDevice.current.orientation == UIDeviceOrientation.landscapeRight {
-                degree = 180
-            }
-            
             let image = UIImage(cgImage: cgImage)
-            let rotated = rotatedUIImage(image: image, degree: degree)
-            var normalized = normalizedImage(rotated)
+            var normalized = normalizedImage(image)
             if self.scanRegion != nil {
                 normalized = croppedUIImage(image: normalized, scanRegion: self.scanRegion)
             }
@@ -268,7 +315,7 @@ public class CameraPreviewPlugin: CAPPlugin, AVCaptureVideoDataOutputSampleBuffe
     @objc func stopCamera(_ call: CAPPluginCall) {
         restoreWebViewBackground()
         DispatchQueue.main.sync {
-            self.captureSession.stopRunning()
+            destroyCaptureSession()
         }
         call.resolve()
     }
@@ -349,7 +396,7 @@ public class CameraPreviewPlugin: CAPPlugin, AVCaptureVideoDataOutputSampleBuffe
         }
         if cameraID == "Front-Facing Camera" && facingBack == true {
             self.captureSession.removeInput(self.videoInput)
-            self.captureSession.sessionPreset = AVCaptureSession.Preset.hd1280x720
+            self.captureSession.sessionPreset = AVCaptureSession.Preset.photo
             let videoDevice = captureDevice(with: AVCaptureDevice.Position.front)
             self.videoInput = try? AVCaptureDeviceInput(device: videoDevice!)
             self.captureSession.addInput(self.videoInput)
@@ -482,19 +529,42 @@ public class CameraPreviewPlugin: CAPPlugin, AVCaptureVideoDataOutputSampleBuffe
     }
     
     @objc func setFocus(_ call: CAPPluginCall) {
-        let x = call.getFloat("x", -1.0);
-        let y = call.getFloat("y", -1.0);
-        if x != -1.0 && y != -1.0 {
-            let device = videoInput.device
-            do {
-                try device.lockForConfiguration()
-                device.focusPointOfInterest = CGPoint(x: CGFloat(x), y: CGFloat(y))
-                device.unlockForConfiguration()
-            } catch {
-                print("Focues could not be used")
-            }
+        // Validate coordinates (must be normalized 0.0-1.0)
+        guard let x = call.getFloat("x"), 
+            let y = call.getFloat("y"),
+            x >= 0.0 && x <= 1.0,
+            y >= 0.0 && y <= 1.0 else {
+            call.reject("Invalid coordinates. Provide normalized x,y values (0.0-1.0)")
+            return
         }
-        call.resolve()
+
+        let device = videoInput.device
+        
+        do {
+            try device.lockForConfiguration()
+            
+            // 1. Check if focus point is supported
+            guard device.isFocusPointOfInterestSupported else {
+                call.reject("Focus point of interest not supported on this device")
+                return
+            }
+            
+            // 2. Set focus point
+            device.focusPointOfInterest = CGPoint(x: CGFloat(x), y: CGFloat(y))
+            
+            // 3. Set focus mode (choose one supported by your use case)
+            if device.isFocusModeSupported(.autoFocus) {
+                device.focusMode = .autoFocus
+            } else if device.isFocusModeSupported(.continuousAutoFocus) {
+                device.focusMode = .continuousAutoFocus
+            } else {
+                call.reject("No supported focus mode available")
+                return
+            }
+            call.resolve()
+        } catch {
+            call.reject("Failed to lock device for configuration: \(error.localizedDescription)")
+        }
     }
     
     @objc func requestCameraPermission(_ call: CAPPluginCall) {

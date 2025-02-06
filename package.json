@@ -1,7 +1,7 @@
 {
-  "name": "capacitor-plugin-camera",
-  "version": "2.0.3",
-  "description": "A capacitor camera plugin",
+  "name": "capacitor-plugin-camera-forked",
+  "version": "2.0.8",
+  "description": "A capacitor camera plugin - A custom Capacitor camera plugin with additional features.",
   "main": "dist/plugin.cjs.js",
   "module": "dist/esm/index.js",
   "types": "dist/esm/index.d.ts",
@@ -11,20 +11,17 @@
     "android/build.gradle",
     "dist/",
     "ios/Plugin/",
-    "CapacitorPluginCamera.podspec"
+    "CapacitorPluginCameraForked.podspec"
   ],
-  "author": "Lihang Xu",
+  "author": "Lihang Xu + Addons",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/xulihang/capacitor-plugin-camera.git"
+    "url": "git+https://github.com/capexpert-io/capacitor-plugin-camera.git"
   },
   "publishConfig": {
     "registry": "https://registry.npmjs.org/",
     "access": "public"
-  },
-  "bugs": {
-    "url": "https://github.com/xulihang/capacitor-plugin-camera/issues"
   },
   "keywords": [
     "capacitor",
