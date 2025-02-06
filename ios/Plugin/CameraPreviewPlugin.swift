@@ -115,7 +115,7 @@ public class CameraPreviewPlugin: CAPPlugin, AVCaptureVideoDataOutputSampleBuffe
         let previewHeight = screenWidth * aspectRatio // Calculate height
 
         let screenHeight = previewView.bounds.height
-        let previewY = (screenHeight - previewHeight) * 0.4 // Center vertically
+        let previewY = (screenHeight - previewHeight) * 0.5 // Center vertically
       
         self.previewView.frame = CGRect(x: 0, y: previewY, width: screenWidth, height: previewHeight)
     }
