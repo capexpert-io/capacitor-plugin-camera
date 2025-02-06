@@ -101,8 +101,8 @@ public class CameraPreviewPlugin extends Plugin {
     private PluginCall stopRecordingCall;
     private PluginCall takeSnapshotCall;
     private PluginCall saveFrameCall;
-    private int desiredWidth = 1280;
-    private int desiredHeight = 720;
+    private int desiredWidth = 1920;
+    private int desiredHeight = 1080;
     private CameraState previousCameraStatus;
     private ScanRegion scanRegion;
 
@@ -114,6 +114,7 @@ public class CameraPreviewPlugin extends Plugin {
             @RequiresApi(api = Build.VERSION_CODES.P)
             public void run() {
                 previewView = new PreviewView(getContext());
+                previewView.setScaleType(PreviewView.ScaleType.FIT_CENTER);
                 FrameLayout.LayoutParams cameraPreviewParams = new FrameLayout.LayoutParams(
                         FrameLayout.LayoutParams.MATCH_PARENT,
                         FrameLayout.LayoutParams.MATCH_PARENT
