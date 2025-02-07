@@ -322,23 +322,36 @@ public class CameraPreviewPlugin extends Plugin {
 
     @PluginMethod
     public void setFocus(PluginCall call) {
-        if (call.hasOption("x") && call.hasOption("y")) {
-            Float x = call.getFloat("x");
-            Float y = call.getFloat("y");
-            try {
-                MeteringPointFactory factory = new SurfaceOrientedMeteringPointFactory(previewView.getWidth(), previewView.getHeight());
-                MeteringPoint point = factory.createPoint(x, y);
-                FocusMeteringAction.Builder builder = new FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF);
-                // auto calling cancelFocusAndMetering in 5 seconds
-                builder.setAutoCancelDuration(5, TimeUnit.SECONDS);
-                FocusMeteringAction action = builder.build();
-                camera.getCameraControl().startFocusAndMetering(action);
-            } catch (Exception e) {
-                e.printStackTrace();
-                call.reject(e.getMessage());
-            }
+      if (call.hasOption("x") && call.hasOption("y")) {
+        Float x = call.getFloat("x");
+        Float y = call.getFloat("y");
+
+        if (previewView == null || camera == null) {
+          call.reject("Camera preview is not initialized");
+          return;
         }
-        call.resolve();
+
+        try {
+          // Convert normalized coordinates to absolute pixel coordinates
+          float absoluteX = x * previewView.getWidth();
+          float absoluteY = y * previewView.getHeight();
+
+          MeteringPointFactory factory = new SurfaceOrientedMeteringPointFactory(previewView.getWidth(), previewView.getHeight());
+          MeteringPoint point = factory.createPoint(absoluteX, absoluteY);
+
+          FocusMeteringAction.Builder builder = new FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF);
+          builder.setAutoCancelDuration(5, TimeUnit.SECONDS);
+          FocusMeteringAction action = builder.build();
+          camera.getCameraControl().startFocusAndMetering(action);
+
+          call.resolve();
+        } catch (Exception e) {
+          call.reject("Error setting focus: " + e.getMessage());
+        }
+
+      } else {
+        call.reject("Invalid focus coordinates");
+      }
     }
 
     @PluginMethod
