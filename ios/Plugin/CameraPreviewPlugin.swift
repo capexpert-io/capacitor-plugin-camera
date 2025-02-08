@@ -545,23 +545,28 @@ public class CameraPreviewPlugin: CAPPlugin, AVCaptureVideoDataOutputSampleBuffe
             
             // 1. Check if focus point is supported
             guard device.isFocusPointOfInterestSupported else {
+                device.unlockForConfiguration()
                 call.reject("Focus point of interest not supported on this device")
                 return
             }
             
             // 2. Set focus point
             device.focusPointOfInterest = CGPoint(x: CGFloat(x), y: CGFloat(y))
-            
             // 3. Set focus mode (choose one supported by your use case)
-            if device.isFocusModeSupported(.autoFocus) {
-                device.focusMode = .autoFocus
-            } else if device.isFocusModeSupported(.continuousAutoFocus) {
+            if device.isFocusModeSupported(.continuousAutoFocus) {
                 device.focusMode = .continuousAutoFocus
+            } else if device.isFocusModeSupported(.autoFocus) {
+                device.focusMode = .autoFocus
             } else {
                 call.reject("No supported focus mode available")
                 return
             }
-            call.resolve()
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
+                device.unlockForConfiguration()
+            }
+
+            call.resolve()            
         } catch {
             call.reject("Failed to lock device for configuration: \(error.localizedDescription)")
         }
