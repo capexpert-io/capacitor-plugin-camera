@@ -130,6 +130,7 @@ public class CameraPreviewPlugin extends Plugin {
 
             previewView = new PreviewView(getContext());
             previewView.setScaleType(PreviewView.ScaleType.FIT_CENTER);
+            previewView.setBackgroundColor(Color.TRANSPARENT);
             FrameLayout.LayoutParams cameraPreviewParams = new FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
             FrameLayout.LayoutParams.MATCH_PARENT
