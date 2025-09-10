@@ -290,7 +290,7 @@ stopCamera() => Promise<void>
 ### takeSnapshot(...)
 
 ```typescript
-takeSnapshot(options: { quality?: number; checkBlur?: boolean; }) => Promise<{ base64: string; isBlur?: boolean; }>
+takeSnapshot(options: { quality?: number; checkBlur?: boolean; }) => Promise<{ base64: string; confidence?: number; }>
 ```
 
 take a snapshot as base64.
@@ -299,7 +299,7 @@ take a snapshot as base64.
 | ------------- | ------------------------------------------------------- |
 | **`options`** | <code>{ quality?: number; checkBlur?: boolean; }</code> |
 
-**Returns:** <code>Promise&lt;{ base64: string; isBlur?: boolean; }&gt;</code>
+**Returns:** <code>Promise&lt;{ base64: string; confidence?: number; }&gt;</code>
 
 --------------------
 
@@ -354,14 +354,14 @@ take a snapshot on to a canvas. Web Only
 ### takePhoto(...)
 
 ```typescript
-takePhoto(options: { pathToSave?: string; includeBase64?: boolean; }) => Promise<{ path?: string; base64?: string; blob?: Blob; isBlur?: boolean; }>
+takePhoto(options: { pathToSave?: string; includeBase64?: boolean; }) => Promise<{ path?: string; base64?: string; blob?: Blob; confidence?: number; }>
 ```
 
 | Param         | Type                                                           |
 | ------------- | -------------------------------------------------------------- |
 | **`options`** | <code>{ pathToSave?: string; includeBase64?: boolean; }</code> |
 
-**Returns:** <code>Promise&lt;{ path?: string; base64?: string; blob?: any; isBlur?: boolean; }&gt;</code>
+**Returns:** <code>Promise&lt;{ path?: string; base64?: string; blob?: any; confidence?: number; }&gt;</code>
 
 --------------------
 

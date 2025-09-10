@@ -224,9 +224,9 @@ public class CameraPreviewPlugin extends Plugin {
                         // Only detect blur if checkBlur option is true
                         boolean shouldCheckBlur = takeSnapshotCall.getBoolean("checkBlur", false);
                         if (shouldCheckBlur) {
-                            boolean isBlur = calculateBlurResult(bitmap);
-                            result.put("isBlur", isBlur);
-                            Log.d("Camera", "Blur detection - Label: " + (isBlur ? "blur" : "sharp"));
+                            double confidence = calculateBlurConfidence(bitmap);
+                            result.put("confidence", confidence);
+                            Log.d("Camera", "Blur detection - Confidence: " + confidence);
                         } else {
                             Log.d("Camera", "Blur detection disabled for performance");
                         }
@@ -1128,9 +1128,16 @@ public class CameraPreviewPlugin extends Plugin {
                                 if (call.getBoolean("includeBase64", false)) {
                                     String base64 = Base64.encodeToString(convertFileToByteArray(file), Base64.DEFAULT);
                                     result.put("base64", base64);
+                                    
+                                    // Detect blur if base64 is included
+                                    Bitmap bitmap = BitmapFactory.decodeFile(file.getAbsolutePath());
+                                    if (bitmap != null) {
+                                        double confidence = calculateBlurConfidence(bitmap);
+                                        result.put("confidence", confidence);
+                                        Log.d("Camera", "Blur detection - Confidence: " + confidence);
+                                    }
                                 }
                                 result.put("path", file.getAbsolutePath());
-                                call.resolve(result);
                             }
 
                             @Override
@@ -1454,6 +1461,25 @@ public class CameraPreviewPlugin extends Plugin {
             // Fallback to original Laplacian algorithm
             double laplacianScore = calculateLaplacianBlurScore(bitmap);
             return laplacianScore < 50;
+        }
+    }
+
+    /**
+     * Calculate blur confidence score (0-1 where 1 is sharp, 0 is blurry)
+     */
+    private double calculateBlurConfidence(Bitmap bitmap) {
+        if (bitmap == null) return 0.0;
+        
+        // Use TFLite model if available for detailed confidence
+        if (blurDetectionHelper != null && blurDetectionHelper.isInitialized()) {
+            java.util.Map<String, Object> result = blurDetectionHelper.detectBlurWithConfidence(bitmap);
+            Double blurConfidence = (Double) result.get("blurConfidence");
+            return blurConfidence != null ? blurConfidence : 0.0;
+        } else {
+            // Fallback to Laplacian algorithm with confidence calculation
+            double laplacianScore = calculateLaplacianBlurScore(bitmap);
+            // Normalize to 0-1 range (higher score = sharper image)
+            return Math.max(0.0, Math.min(1.0, laplacianScore / 300.0));
         }
     }
     

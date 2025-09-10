@@ -442,9 +442,10 @@ public class CameraPreviewPlugin: CAPPlugin, AVCaptureVideoDataOutputSampleBuffe
                     ret["base64"] = base64
                     
                     // Detect blur if base64 is included
-                    let isBlur = calculateBlurResult(image: image!)
-                    ret["isBlur"] = isBlur
-                    print("Blur detection - Label: \(isBlur ? "blur" : "sharp")")
+                    // Detect blur if base64 is included
+                    let confidence = calculateBlurConfidence(image: image!)
+                    ret["confidence"] = confidence
+                    print("Blur detection - Confidence: \(confidence)")
                 }
                 do {
                     
@@ -512,9 +513,9 @@ public class CameraPreviewPlugin: CAPPlugin, AVCaptureVideoDataOutputSampleBuffe
                 // Only detect blur if checkBlur option is true
                 let shouldCheckBlur = takeSnapshotCall.getBool("checkBlur", false)
                 if shouldCheckBlur {
-                    let isBlur = calculateBlurResult(image: normalized)
-                    ret["isBlur"] = isBlur
-                    print("Blur detection - Label: \(isBlur ? "blur" : "sharp")")
+                    let confidence = calculateBlurConfidence(image: normalized)
+                    ret["confidence"] = confidence
+                    print("Blur detection - Confidence: \(confidence)")
                 } else {
                     print("Blur detection disabled for performance")
                 }
@@ -1301,6 +1302,24 @@ public class CameraPreviewPlugin: CAPPlugin, AVCaptureVideoDataOutputSampleBuffe
             let laplacianScore = calculateLaplacianBlurScore(image: image)
             return laplacianScore < 50
         }
+    }
+
+    /**
+     * Calculate blur confidence score (0-1 where 1 is sharp, 0 is blurry)
+     */
+    private func calculateBlurConfidence(image: UIImage) -> Double {
+        // Use TFLite model if available for detailed confidence
+        if let helper = blurDetectionHelper, helper.getIsInitialized() {
+            let result = helper.detectBlurWithConfidence(image: image)
+            if let blurConfidence = result["blurConfidence"] as? Double {
+                return blurConfidence
+            }
+        }
+        
+        // Fallback to Laplacian algorithm with confidence calculation
+        let laplacianScore = calculateLaplacianBlurScore(image: image)
+        // Normalize to 0-1 range (higher score = sharper image)
+        return max(0.0, min(1.0, laplacianScore / 300.0))
     }
     
     // Original Laplacian blur detection (fallback)
