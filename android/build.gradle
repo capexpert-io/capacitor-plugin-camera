@@ -47,6 +47,13 @@ repositories {
     mavenCentral()
 }
 
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
 
 dependencies {
     implementation fileTree(dir: 'libs', include: ['*.jar'])
@@ -68,4 +75,7 @@ dependencies {
     implementation 'org.tensorflow:tensorflow-lite:2.14.0'
     implementation 'org.tensorflow:tensorflow-lite-support:0.4.4'
     implementation 'org.tensorflow:tensorflow-lite-gpu:2.14.0'
+    
+    // Google ML Kit dependencies for text recognition
+    implementation 'com.google.mlkit:text-recognition:16.0.1'
 }

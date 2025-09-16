@@ -1473,8 +1473,22 @@ public class CameraPreviewPlugin extends Plugin {
         // Use TFLite model if available for detailed confidence
         if (blurDetectionHelper != null && blurDetectionHelper.isInitialized()) {
             java.util.Map<String, Object> result = blurDetectionHelper.detectBlurWithConfidence(bitmap);
+            Boolean isBlur = (Boolean) result.get("isBlur");
             Double blurConfidence = (Double) result.get("blurConfidence");
-            return blurConfidence != null ? blurConfidence : 0.0;
+            Double sharpConfidence = (Double) result.get("sharpConfidence");
+            
+            Log.d("Camera", String.format("Blur detection result - isBlur: %s, blurConfidence: %.3f, sharpConfidence: %.3f", 
+                    isBlur, blurConfidence != null ? blurConfidence : 0.0, sharpConfidence != null ? sharpConfidence : 0.0));
+            
+            // Return the actual blurConfidence value for more nuanced results
+            if (blurConfidence != null) {
+                return blurConfidence;
+            } else if (isBlur != null) {
+                // Fallback to boolean if confidence not available
+                return isBlur ? 1.0 : 0.0;
+            } else {
+                return 0.0;
+            }
         } else {
             // Fallback to Laplacian algorithm with confidence calculation
             double laplacianScore = calculateLaplacianBlurScore(bitmap);
