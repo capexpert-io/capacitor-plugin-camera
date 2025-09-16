@@ -10,7 +10,7 @@ import Vision
 class TextRecognitionBlurHelper {
     
     private static let TAG = "TextRecognitionBlurHelper"
-    private static let MIN_WORD_CONFIDENCE = 0.8 // 80% confidence threshold
+    private static let MIN_WORD_CONFIDENCE = 0.7 // 70% confidence threshold
     private static let AT_LEAST_N_PERCENT_OF_WORDS_ARE_READABLE = 0.6 // 60% of words are readable
     private static let AT_LEAST_N_PERCENT_OF_AVERAGE_CONFIDENCE = 0.85 // 85% of average confidence
     
@@ -125,11 +125,6 @@ class TextRecognitionBlurHelper {
         }
         
         let requestHandler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-        let request = VNRecognizeTextRequest()
-        
-        // Configure text recognition for better accuracy
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = true
         
         var recognitionResult: TextRecognitionResult?
         var recognitionError: Error?
@@ -137,7 +132,7 @@ class TextRecognitionBlurHelper {
         // Use semaphore for synchronous execution
         let semaphore = DispatchSemaphore(value: 0)
         
-        request.completionHandler = { [weak self] (request, error) in
+        let request = VNRecognizeTextRequest { [weak self] (request, error) in
             defer { semaphore.signal() }
             
             if let error = error {
@@ -152,6 +147,10 @@ class TextRecognitionBlurHelper {
             
             recognitionResult = self?.analyzeTextConfidence(observations: observations)
         }
+        
+        // Configure text recognition for better accuracy
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = true
         
         // Perform text recognition
         try requestHandler.perform([request])
@@ -281,8 +280,9 @@ class TextRecognitionBlurHelper {
         // Penalize for special characters that might indicate poor recognition
         let specialCharPattern = "[^a-zA-Z0-9\\s\\-\\.]"
         if word.range(of: specialCharPattern, options: .regularExpression) != nil {
-            confidence -= 0.1
+            confidence -= 0.05
         }
+        print("\(Self.TAG): Readability confidence: \(String(format: "%.3f", confidence))")
         
         return max(0.0, min(1.0, confidence))
     }
