@@ -49,10 +49,8 @@ public class TextRecognitionBlurHelper {
         try {
             textRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
             isInitialized = true;
-            Log.d(TAG, "Text recognizer initialized successfully");
             return true;
         } catch (Exception e) {
-            Log.e(TAG, "Failed to initialize text recognizer: " + e.getMessage(), e);
             isInitialized = false;
             return false;
         }
@@ -65,24 +63,16 @@ public class TextRecognitionBlurHelper {
      */
     public boolean isBlurry(Bitmap bitmap) {
         if (!isInitialized || textRecognizer == null) {
-            Log.w(TAG, "Text recognizer not initialized");
             return false; // Default to not blurry if not initialized
         }
 
-        Log.d(TAG, "Starting text recognition blur detection...");
         try {
             TextRecognitionResult result = detectTextWithConfidence(bitmap);
-            Log.d(TAG, String.format("Text recognition result: %s (confidence: %.3f, words: %d/%d)", 
-                    result.isReadable ? "READABLE" : "BLURRY", 
-                    result.averageConfidence, result.readableWords, result.totalWords));
             
             boolean isBlurry = !result.isReadable;
-            Log.d(TAG, String.format("Blur detection result: %s (returning %.1f)", 
-                    isBlurry ? "BLURRY" : "SHARP", isBlurry ? 1.0 : 0.0));
             
             return isBlurry;
         } catch (Exception e) {
-            Log.e(TAG, "Error during text recognition: " + e.getMessage(), e);
             return false; // Default to not blurry on error
         }
     }
@@ -96,7 +86,6 @@ public class TextRecognitionBlurHelper {
         java.util.Map<String, Object> result = new java.util.HashMap<>();
         
         if (!isInitialized || textRecognizer == null) {
-            Log.w(TAG, "Text recognizer not initialized");
             result.put("isBlur", false);
             result.put("textConfidence", 0.0);
             result.put("wordCount", 0);
@@ -114,14 +103,10 @@ public class TextRecognitionBlurHelper {
             result.put("readableWords", recognitionResult.readableWords);
             result.put("hasText", recognitionResult.totalWords > 0);
             
-            Log.d(TAG, String.format("Text Recognition Result - Readable: %s, Confidence: %.3f, Words: %d/%d",
-                    recognitionResult.isReadable, recognitionResult.averageConfidence, 
-                    recognitionResult.readableWords, recognitionResult.totalWords));
             
             return result;
             
         } catch (Exception e) {
-            Log.e(TAG, "Error during text recognition: " + e.getMessage(), e);
             result.put("isBlur", false);
             result.put("textConfidence", 0.0);
             result.put("wordCount", 0);
@@ -150,14 +135,12 @@ public class TextRecognitionBlurHelper {
                     TextRecognitionResult result = analyzeTextConfidence(visionText);
                     resultRef.set(result);
                 } catch (Exception e) {
-                    Log.e(TAG, "Error analyzing text confidence: " + e.getMessage(), e);
                     hasError.set(true);
                 } finally {
                     latch.countDown();
                 }
             })
             .addOnFailureListener(e -> {
-                Log.e(TAG, "Text recognition failed: " + e.getMessage(), e);
                 hasError.set(true);
                 latch.countDown();
             });
@@ -166,7 +149,6 @@ public class TextRecognitionBlurHelper {
             // Wait for result with timeout
             boolean completed = latch.await(TIMEOUT_MS, TimeUnit.MILLISECONDS);
             if (!completed) {
-                Log.w(TAG, "Text recognition timed out after " + TIMEOUT_MS + "ms");
                 return new TextRecognitionResult(false, 0.0, 0, 0);
             }
             
@@ -178,7 +160,6 @@ public class TextRecognitionBlurHelper {
             return result != null ? result : new TextRecognitionResult(false, 0.0, 0, 0);
             
         } catch (InterruptedException e) {
-            Log.e(TAG, "Text recognition interrupted: " + e.getMessage(), e);
             Thread.currentThread().interrupt();
             return new TextRecognitionResult(false, 0.0, 0, 0);
         }
@@ -196,14 +177,11 @@ public class TextRecognitionBlurHelper {
         StringBuilder allText = new StringBuilder();
         StringBuilder readableText = new StringBuilder();
         
-        Log.d(TAG, "=== Text Recognition Analysis ===");
         
         for (Text.TextBlock block : visionText.getTextBlocks()) {
-            Log.d(TAG, "Text Block: " + block.getText());
             allText.append(block.getText()).append(" ");
             
             for (Text.Line line : block.getLines()) {
-                Log.d(TAG, "  Line: " + line.getText());
                 
                 for (Text.Element element : line.getElements()) {
                     String text = element.getText().trim();
@@ -215,18 +193,13 @@ public class TextRecognitionBlurHelper {
                         double confidence = estimateWordConfidence(element, text);
                         totalConfidence += confidence;
                         
-                        Log.d(TAG, String.format("    Word: '%s' | Confidence: %.3f | Readable: %s", 
-                                text, confidence, confidence >= MIN_WORD_CONFIDENCE ? "YES" : "NO"));
                         
                         if (confidence >= MIN_WORD_CONFIDENCE) {
                             // Optional dictionary check for enhanced validation
                             if (!useDictionaryCheck || isInDictionary(text)) {
                                 readableWords++;
                                 readableText.append(text).append(" ");
-                                Log.d(TAG, String.format("      ✓ Added to readable words (dict check: %s)", 
-                                        useDictionaryCheck ? (isInDictionary(text) ? "PASS" : "FAIL") : "SKIPPED"));
                             } else {
-                                Log.d(TAG, "      ✗ Failed dictionary check");
                             }
                         }
                     }
@@ -242,17 +215,6 @@ public class TextRecognitionBlurHelper {
             boolean isReadable = totalWords > 0 && 
                                (readableWords >= Math.max(1, totalWords * AT_LEAST_N_PERCENT_OF_WORDS_ARE_READABLE) || averageConfidence >= AT_LEAST_N_PERCENT_OF_AVERAGE_CONFIDENCE);
         
-        // Log summary
-        Log.d(TAG, "=== Text Recognition Summary ===");
-        Log.d(TAG, "All detected text: '" + allText.toString().trim() + "'");
-        Log.d(TAG, "Readable text: '" + readableText.toString().trim() + "'");
-        Log.d(TAG, String.format("Total words: %d | Readable words: %d | Average confidence: %.3f", 
-                totalWords, readableWords, averageConfidence));
-        Log.d(TAG, String.format("Readability threshold: %.1f%% (need %.1f%%) | Result: %s", 
-                totalWords > 0 ? (readableWords * 100.0 / totalWords) : 0.0,
-                AT_LEAST_N_PERCENT_OF_WORDS_ARE_READABLE * 100.0,
-                isReadable ? "READABLE" : "BLURRY"));
-        Log.d(TAG, "================================");
         
         return new TextRecognitionResult(isReadable, averageConfidence, totalWords, readableWords);
     }
@@ -340,7 +302,6 @@ public class TextRecognitionBlurHelper {
      */
     public void setDictionaryCheckEnabled(boolean enable) {
         this.useDictionaryCheck = enable;
-        Log.d(TAG, "Dictionary check " + (enable ? "enabled" : "disabled"));
     }
 
     /**

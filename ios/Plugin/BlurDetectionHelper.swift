@@ -36,7 +36,6 @@ class BlurDetectionHelper {
             // Load model from framework bundle
             let frameworkBundle = Bundle(for: type(of: self))
             guard let modelPath = frameworkBundle.path(forResource: "blur_detection_model", ofType: "tflite") else {
-                print("\(Self.TAG): Error - Model file not found in bundle")
                 return false
             }
             
@@ -57,7 +56,6 @@ class BlurDetectionHelper {
             return true
             
         } catch {
-            print("\(Self.TAG): Error initializing TFLite model: \(error)")
             isInitialized = false
             return false
         }
@@ -69,11 +67,9 @@ class BlurDetectionHelper {
      * @return Blur confidence score (0.0 = sharp, 1.0 = very blurry)
      */
     func detectBlur(image: UIImage) -> Double {
-        print("\(Self.TAG): DEBUG: detectBlur method called")
         
         // First try text recognition if enabled
         if useTextRecognition, let textHelper = textBlurHelper, textHelper.getIsInitialized() {
-            print("\(Self.TAG): DEBUG: Text recognition is enabled and initialized")
             
             let textResult = textHelper.detectBlurWithConfidence(image: image)
             let hasText = textResult["hasText"] as? Bool ?? false
@@ -85,23 +81,17 @@ class BlurDetectionHelper {
                 let wordCount = textResult["wordCount"] as? Int
                 let readableWords = textResult["readableWords"] as? Int
                 
-                print("\(Self.TAG): DEBUG: hasText=\(hasText), isBlur=\(isBlur ?? false), textConfidence=\(textConfidence ?? 0.0), wordCount=\(wordCount ?? 0), readableWords=\(readableWords ?? 0)")
                 
                 if let isBlur = isBlur {
                     let blurConfidence = isBlur ? 1.0 : 0.0
-                    print("\(Self.TAG): Using text recognition for blur detection - Result: \(isBlur ? "BLURRY" : "SHARP"), Confidence: \(String(format: "%.3f", textConfidence ?? 0.0)), Words: \(readableWords ?? 0)/\(wordCount ?? 0)")
-                    print("\(Self.TAG): Final blur confidence: \(String(format: "%.1f", blurConfidence)) (\(isBlur ? "BLURRY" : "SHARP"))")
                     return blurConfidence
                 } else {
-                    print("\(Self.TAG): DEBUG: isBlur is null, falling back to TFLite")
                 }
             } else {
-                print("\(Self.TAG): No text detected in image, falling back to TFLite/Laplacian")
             }
         }
         
         // Fallback to TFLite model
-        print("\(Self.TAG): Falling back to TFLite/Laplacian blur detection")
         return detectBlurWithTFLite(image: image)
     }
     
@@ -112,19 +102,15 @@ class BlurDetectionHelper {
      */
     func detectBlurWithTFLite(image: UIImage) -> Double {
         guard isInitialized, let interpreter = interpreter else {
-            print("\(Self.TAG): TFLite model not initialized, falling back to Laplacian")
             let laplacianScore = calculateLaplacianBlurScore(image: image)
             let isBlur = laplacianScore < 150
-            print("\(Self.TAG): Using Laplacian blur detection - Score: \(String(format: "%.2f", laplacianScore)), Result: \(isBlur ? "BLURRY" : "SHARP")")
             return isBlur ? 1.0 : 0.0
         }
         
-        print("\(Self.TAG): Using TFLite model for blur detection")
         
         do {
             // Preprocess image for model input
             guard let inputData = preprocessImage(image) else {
-                print("\(Self.TAG): Error preprocessing image")
                 let laplacianScore = calculateLaplacianBlurScore(image: image)
                 let isBlur = laplacianScore < 150
                 return isBlur ? 1.0 : 0.0
@@ -152,13 +138,11 @@ class BlurDetectionHelper {
             // Determine if image is blurry using TFLite confidence
             let isBlur = (blurConfidence >= 0.99 || sharpConfidence < 0.1)
 
-            print("\(Self.TAG): TFLite blur detection - Blur: \(String(format: "%.6f", blurConfidence)), Sharp: \(String(format: "%.6f", sharpConfidence)), Result: \(isBlur ? "BLURRY" : "SHARP")")
             
             // Return 1.0 for blur, 0.0 for sharp (to maintain double return type)
             return isBlur ? 1.0 : 0.0
             
         } catch {
-            print("\(Self.TAG): Error during TFLite inference: \(error)")
             // Fallback to Laplacian algorithm
             let laplacianScore = calculateLaplacianBlurScore(image: image)
             let isBlur = laplacianScore < 150
@@ -353,7 +337,6 @@ class BlurDetectionHelper {
                     result["sharpConfidence"] = (isBlur ?? true) ? 0.0 : 1.0
                 }
                 
-                print("\(Self.TAG): Using text recognition for blur detection - isBlur: \(isBlur ?? false), textConfidence: \(String(format: "%.3f", textConfidence ?? 0.0)), blurConf: \(String(format: "%.3f", result["blurConfidence"] as? Double ?? 0.0)), sharpConf: \(String(format: "%.3f", result["sharpConfidence"] as? Double ?? 0.0))")
                 
                 return result
             }
@@ -370,7 +353,6 @@ class BlurDetectionHelper {
      */
     func detectBlurWithTFLiteConfidence(image: UIImage) -> [String: Any] {
         guard isInitialized, let interpreter = interpreter else {
-            print("\(Self.TAG): TFLite model not initialized, falling back to Laplacian")
             let laplacianScore = calculateLaplacianBlurScore(image: image)
             let isBlur = laplacianScore < 150
             let normalizedScore = max(0.0, min(1.0, laplacianScore / 300.0))
@@ -390,7 +372,6 @@ class BlurDetectionHelper {
         do {
             // Preprocess image for model input
             guard let inputData = preprocessImage(image) else {
-                print("\(Self.TAG): Error preprocessing image")
                 let laplacianScore = calculateLaplacianBlurScore(image: image)
                 let isBlur = laplacianScore < 150
                 let normalizedScore = max(0.0, min(1.0, laplacianScore / 300.0))
@@ -429,7 +410,6 @@ class BlurDetectionHelper {
             // Determine if image is blurry using TFLite confidence
             let isBlur = (blurConfidence >= 0.99 || sharpConfidence < 0.1)
 
-            print("\(Self.TAG): TFLite Blur Detection with Confidence - Blur: \(String(format: "%.6f", blurConfidence)), Sharp: \(String(format: "%.6f", sharpConfidence)), Label: \(isBlur ? "blur" : "sharp")")
             
             return [
                 "method": "tflite",
@@ -440,7 +420,6 @@ class BlurDetectionHelper {
             ]
             
         } catch {
-            print("\(Self.TAG): Error during TFLite inference: \(error)")
             // Fallback to Laplacian algorithm
             let laplacianScore = calculateLaplacianBlurScore(image: image)
             let isBlur = laplacianScore < 150
@@ -486,7 +465,6 @@ class BlurDetectionHelper {
      */
     func setTextRecognitionEnabled(_ enable: Bool) {
         useTextRecognition = enable
-        print("\(Self.TAG): Text recognition \(enable ? "enabled" : "disabled")")
     }
     
     /**
@@ -521,7 +499,6 @@ class BlurDetectionHelper {
         textBlurHelper?.close()
         textBlurHelper = nil
         isInitialized = false
-        print("\(Self.TAG): TFLite blur detection model closed")
     }
     
     /**

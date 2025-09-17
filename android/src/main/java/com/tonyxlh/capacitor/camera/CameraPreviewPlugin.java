@@ -125,7 +125,6 @@ public class CameraPreviewPlugin extends Plugin {
                 desiredJpegQuality = call.getInt("quality");
                 // Ensure quality is within valid range
                 desiredJpegQuality = Math.max(1, Math.min(100, desiredJpegQuality));
-                Log.d("Camera", "Initialized with JPEG quality: " + desiredJpegQuality);
             }
 
             previewView = new PreviewView(getContext());
@@ -144,7 +143,6 @@ public class CameraPreviewPlugin extends Plugin {
             // Initialize TFLite blur detection helper
             blurDetectionHelper = new BlurDetectionHelper();
             boolean tfliteInitialized = blurDetectionHelper.initialize(getContext());
-            Log.d("Camera", "TFLite blur detection initialized: " + tfliteInitialized);
             
             cameraProviderFuture.addListener(() -> {
             try {
@@ -153,7 +151,6 @@ public class CameraPreviewPlugin extends Plugin {
                 .requireLensFacing(CameraSelector.LENS_FACING_BACK).build();
                 // Auto-optimize for photo capture on initialization with specified quality
                 setupUseCases(false); // Always use photo-optimized mode
-                Log.d("Camera", "Initialized with photo capture optimization and quality: " + desiredJpegQuality);
                 call.resolve();
             } catch (ExecutionException | InterruptedException e) {
                 e.printStackTrace();
@@ -172,10 +169,9 @@ public class CameraPreviewPlugin extends Plugin {
         Preview.Builder previewBuilder = new Preview.Builder();
         if (resolution != null) {
         previewBuilder.setTargetResolution(resolution);
-        Log.d("Camera", "Using optimal resolution: " + resolution.getWidth() + "x" + resolution.getHeight());
         } else {
-        // Fallback: let CameraX choose the best resolution automatically
-        Log.d("Camera", "Using CameraX auto-resolution selection");
+            // Fallback: let CameraX choose the best resolution automatically
+            Log.d("Camera", "Using CameraX auto-resolution selection");
         }
         preview = previewBuilder.build();
         preview.setSurfaceProvider(previewView.getSurfaceProvider());
@@ -183,7 +179,7 @@ public class CameraPreviewPlugin extends Plugin {
         // Enhanced ImageAnalysis setup
         ImageAnalysis.Builder imageAnalysisBuilder = new ImageAnalysis.Builder();
         if (resolution != null) {
-        imageAnalysisBuilder.setTargetResolution(resolution);
+            imageAnalysisBuilder.setTargetResolution(resolution);
         }
         imageAnalysisBuilder.setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
         .setImageQueueDepth(1); // Optimize for latest frame
@@ -226,7 +222,6 @@ public class CameraPreviewPlugin extends Plugin {
                         if (shouldCheckBlur) {
                             double confidence = calculateBlurConfidence(bitmap);
                             result.put("confidence", confidence);
-                            Log.d("Camera", "Blur detection - Confidence: " + confidence);
                         } else {
                             Log.d("Camera", "Blur detection disabled for performance");
                         }
@@ -317,15 +312,13 @@ public class CameraPreviewPlugin extends Plugin {
         
         // Return the first (highest quality) option - CameraX will adapt if not supported
         Size optimalResolution = preferredResolutions[0];
-        Log.d("Camera", "Selected optimal resolution: " + optimalResolution.getWidth() + "x" + optimalResolution.getHeight());
         return optimalResolution;
         
         } catch (Exception e) {
-        Log.e("Camera", "Error selecting optimal resolution: " + e.getMessage());
+            Log.e("Camera", "Error selecting optimal resolution: " + e.getMessage());
         }
         
         // Fallback: return null to let CameraX auto-select
-        Log.d("Camera", "Using CameraX auto-resolution selection as fallback");
         return null;
     }
 
@@ -350,8 +343,6 @@ public class CameraPreviewPlugin extends Plugin {
                 
                 // Enable continuous auto-focus by starting a background focus monitoring
                 startContinuousAutoFocus();
-                
-                Log.d("Camera", "Initialized responsive auto-focus with continuous monitoring");
             } catch (Exception e) {
                 Log.e("Camera", "Failed to initialize responsive auto-focus: " + e.getMessage());
             }
@@ -454,7 +445,6 @@ public class CameraPreviewPlugin extends Plugin {
                     useCaseGroup = null;
                     recorder = null;
                     currentRecording = null;
-                    Log.d("Camera", "Camera stopped and all references cleared.");
                     call.resolve();
                 } catch (Exception e) {
                     call.reject(e.getMessage());
@@ -660,7 +650,6 @@ public class CameraPreviewPlugin extends Plugin {
 
                         // If focus failed, try a backup focus attempt to reduce need for multiple taps
                         if (!result.isFocusSuccessful()) {
-                            Log.d("Camera", "Initial focus failed, attempting backup focus");
                             performBackupFocus(previewX, previewY);
                         } else {
                             // If manual focus was successful, maintain it with a follow-up action
@@ -809,7 +798,6 @@ public class CameraPreviewPlugin extends Plugin {
                                             .build();
                                         
                                         camera.getCameraControl().startFocusAndMetering(adaptiveAction);
-                                        Log.d("Camera", "Adaptive focus at point: " + (currentPointIndex + 1));
                                     }
                                 } catch (Exception e) {
                                     Log.d("Camera", "Adaptive focus failed: " + e.getMessage());
@@ -1134,7 +1122,6 @@ public class CameraPreviewPlugin extends Plugin {
                                     if (bitmap != null) {
                                         double confidence = calculateBlurConfidence(bitmap);
                                         result.put("confidence", confidence);
-                                        Log.d("Camera", "Blur detection - Confidence: " + confidence);
                                     }
                                 }
                                 result.put("path", file.getAbsolutePath());
@@ -1193,9 +1180,7 @@ public class CameraPreviewPlugin extends Plugin {
                     Consumer<VideoRecordEvent> captureListener = new Consumer<VideoRecordEvent>() {
                         @Override
                         public void accept(VideoRecordEvent videoRecordEvent) {
-                            Log.d("Camera",videoRecordEvent.toString());
                             if (videoRecordEvent instanceof VideoRecordEvent.Finalize) {
-                                Log.d("Camera","finalize");
                                 Uri uri = ((VideoRecordEvent.Finalize) videoRecordEvent).getOutputResults().getOutputUri();
                                 String path = uri.getPath();
 
@@ -1308,7 +1293,6 @@ public class CameraPreviewPlugin extends Plugin {
             useCaseGroup = null;
             recorder = null;
             currentRecording = null;
-            Log.d("Camera", "handleOnPause: Camera stopped and references cleared.");
         }
         
         // Clean up TFLite resources
@@ -1341,7 +1325,6 @@ public class CameraPreviewPlugin extends Plugin {
     public void requestCameraPermission(PluginCall call) {
         boolean hasCameraPerms = getPermissionState(CAMERA) == PermissionState.GRANTED;
         if (hasCameraPerms == false) {
-            Log.d("Camera","no camera permission. request permission.");
             String[] aliases = new String[] { CAMERA };
             requestPermissionForAliases(aliases, call, "cameraPermissionsCallback");
         }else{
@@ -1363,7 +1346,6 @@ public class CameraPreviewPlugin extends Plugin {
     public void requestMicroPhonePermission(PluginCall call) {
         boolean hasCameraPerms = getPermissionState(MICROPHONE) == PermissionState.GRANTED;
         if (hasCameraPerms == false) {
-            Log.d("Camera","no microphone permission. request permission.");
             String[] aliases = new String[] { MICROPHONE };
             requestPermissionForAliases(aliases, call, "microphonePermissionsCallback");
         }else{
@@ -1476,9 +1458,6 @@ public class CameraPreviewPlugin extends Plugin {
             Boolean isBlur = (Boolean) result.get("isBlur");
             Double blurConfidence = (Double) result.get("blurConfidence");
             Double sharpConfidence = (Double) result.get("sharpConfidence");
-            
-            Log.d("Camera", String.format("Blur detection result - isBlur: %s, blurConfidence: %.3f, sharpConfidence: %.3f", 
-                    isBlur, blurConfidence != null ? blurConfidence : 0.0, sharpConfidence != null ? sharpConfidence : 0.0));
             
             // Return the actual blurConfidence value for more nuanced results
             if (blurConfidence != null) {
@@ -1626,7 +1605,6 @@ public class CameraPreviewPlugin extends Plugin {
                                             try {
                                                 FocusMeteringResult backupResult = backupFuture.get();
                                                 if (backupResult.isFocusSuccessful()) {
-                                                    Log.d("Camera", "Backup focus successful");
                                                     maintainFocusAtPoint(previewX, previewY);
                                                 } else {
                                                     Log.d("Camera", "Backup focus also failed");
@@ -1679,7 +1657,6 @@ public class CameraPreviewPlugin extends Plugin {
                                             .build();
                                         
                                         camera.getCameraControl().startFocusAndMetering(maintainAction);
-                                        Log.d("Camera", "Maintaining focus at tapped point");
                                     }
                                 } catch (Exception e) {
                                     Log.d("Camera", "Focus maintenance failed: " + e.getMessage());

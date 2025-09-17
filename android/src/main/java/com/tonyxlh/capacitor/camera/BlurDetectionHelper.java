@@ -128,10 +128,8 @@ public class BlurDetectionHelper {
      * @return Blur confidence score (0.0 = sharp, 1.0 = very blurry)
      */
     public double detectBlur(Bitmap bitmap) {
-        Log.d(TAG, "DEBUG: detectBlur method called");
         // First try text recognition if enabled
         if (useTextRecognition && textBlurHelper != null && textBlurHelper.isInitialized()) {
-            Log.d(TAG, "DEBUG: Text recognition is enabled and initialized");
             try {
                 java.util.Map<String, Object> textResult = textBlurHelper.detectBlurWithConfidence(bitmap);
                 Boolean hasText = (Boolean) textResult.get("hasText");
@@ -143,32 +141,19 @@ public class BlurDetectionHelper {
                     Integer wordCount = (Integer) textResult.get("wordCount");
                     Integer readableWords = (Integer) textResult.get("readableWords");
                     
-                    Log.d(TAG, String.format("DEBUG: hasText=%s, isBlur=%s, textConfidence=%s, wordCount=%s, readableWords=%s", 
-                            hasText, isBlur, textConfidence, wordCount, readableWords));
                     
                     if (isBlur != null) {
                         double blurConfidence = isBlur ? 1.0 : 0.0;
-                        Log.d(TAG, String.format("Using text recognition for blur detection - Result: %s, Confidence: %.3f, Words: %d/%d", 
-                                isBlur ? "BLURRY" : "SHARP", 
-                                textConfidence != null ? textConfidence : 0.0,
-                                readableWords != null ? readableWords : 0,
-                                wordCount != null ? wordCount : 0));
-                        Log.d(TAG, String.format("Final blur confidence: %.1f (%s)", 
-                                blurConfidence, isBlur ? "BLURRY" : "SHARP"));
                         return blurConfidence;
                     } else {
-                        Log.w(TAG, "DEBUG: isBlur is null, falling back to TFLite");
                     }
                 } else {
-                    Log.d(TAG, "No text detected in image, falling back to TFLite/Laplacian");
                 }
             } catch (Exception e) {
-                Log.w(TAG, "Text recognition failed, falling back to TFLite: " + e.getMessage());
             }
         }
         
         // Fallback to TFLite model
-        Log.d(TAG, "Falling back to TFLite/Laplacian blur detection");
         return detectBlurWithTFLite(bitmap);
     }
 
@@ -179,14 +164,10 @@ public class BlurDetectionHelper {
      */
     public double detectBlurWithTFLite(Bitmap bitmap) {
         if (!isInitialized || tflite == null) {
-            Log.w(TAG, "TFLite model not initialized, falling back to Laplacian");
             double laplacianScore = calculateLaplacianBlurScore(bitmap);
-            Log.d(TAG, String.format("Using Laplacian blur detection - Score: %.2f, Result: %s", 
-                    laplacianScore, laplacianScore < 150 ? "BLURRY" : "SHARP"));
             return laplacianScore;
         }
         
-        Log.d(TAG, "Using TFLite model for blur detection");
 
         try {
             // Use the original bitmap directly (no image enhancement)
@@ -223,14 +204,11 @@ public class BlurDetectionHelper {
             // Determine if image is blurry using TFLite confidence
             boolean isBlur = (blurConfidence >= 0.99 || sharpConfidence < 0.1);
             
-            Log.d(TAG, String.format("TFLite blur detection - Blur: %.6f, Sharp: %.6f, Result: %s", 
-                    blurConfidence, sharpConfidence, isBlur ? "BLURRY" : "SHARP"));
             
             // Return 1.0 for blur, 0.0 for sharp (to maintain double return type)
             return isBlur ? 1.0 : 0.0;
             
         } catch (Exception e) {
-            Log.e(TAG, "Error during TFLite inference: " + e.getMessage(), e);
             // Fallback to Laplacian algorithm
             double laplacianScore = calculateLaplacianBlurScore(bitmap);
             boolean isBlur = laplacianScore < 150;
@@ -404,14 +382,10 @@ public class BlurDetectionHelper {
                         result.put("sharpConfidence", isBlur != null && !isBlur ? 1.0 : 0.0);
                     }
                     
-                    Log.d(TAG, String.format("Using text recognition for blur detection - isBlur: %s, textConfidence: %.3f, blurConf: %.3f, sharpConf: %.3f",
-                            isBlur, textConfidence != null ? textConfidence : 0.0,
-                            result.get("blurConfidence"), result.get("sharpConfidence")));
                     
                     return result;
                 }
             } catch (Exception e) {
-                Log.w(TAG, "Text recognition failed, falling back to TFLite: " + e.getMessage());
             }
         }
         
@@ -428,7 +402,6 @@ public class BlurDetectionHelper {
         java.util.Map<String, Object> result = new java.util.HashMap<>();
         
         if (!isInitialized || tflite == null) {
-            Log.w(TAG, "TFLite model not initialized, falling back to Laplacian");
             double laplacianScore = calculateLaplacianBlurScore(bitmap);
             boolean isBlur = laplacianScore < 150;
             double normalizedScore = Math.max(0.0, Math.min(1.0, laplacianScore / 300.0));
@@ -479,8 +452,6 @@ public class BlurDetectionHelper {
             // Determine if image is blurry using TFLite confidence
             boolean isBlur = (blurConfidence >= 0.99 || sharpConfidence < 0.1);
             
-            Log.d(TAG, String.format("TFLite Blur Detection with Confidence - Blur: %.6f, Sharp: %.6f, Label: %s",
-                    blurConfidence, sharpConfidence, isBlur ? "blur" : "sharp"));
             
             result.put("isBlur", isBlur);
             result.put("blurConfidence", blurConfidence);
@@ -488,7 +459,6 @@ public class BlurDetectionHelper {
             return result;
             
         } catch (Exception e) {
-            Log.e(TAG, "Error during TFLite inference: " + e.getMessage(), e);
             // Fallback to Laplacian algorithm
             double laplacianScore = calculateLaplacianBlurScore(bitmap);
             boolean isBlur = laplacianScore < 150;
@@ -530,7 +500,6 @@ public class BlurDetectionHelper {
      */
     public void setTextRecognitionEnabled(boolean enable) {
         this.useTextRecognition = enable;
-        Log.d(TAG, "Text recognition " + (enable ? "enabled" : "disabled"));
     }
 
     /**

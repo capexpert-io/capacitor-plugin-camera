@@ -39,7 +39,6 @@ class TextRecognitionBlurHelper {
     func initialize() -> Bool {
         // Vision framework is available by default on iOS, no specific initialization needed
         isInitialized = true
-        print("\(Self.TAG): Text recognition helper initialized successfully")
         return true
     }
     
@@ -50,22 +49,17 @@ class TextRecognitionBlurHelper {
      */
     func isBlurry(image: UIImage) -> Bool {
         if !isInitialized {
-            print("\(Self.TAG): Text recognition helper not initialized")
             return false // Default to not blurry if not initialized
         }
         
-        print("\(Self.TAG): Starting text recognition blur detection...")
         
         do {
             let result = try detectTextWithConfidence(image: image)
-            print("\(Self.TAG): Text recognition result: \(result.isReadable ? "READABLE" : "BLURRY") (confidence: \(String(format: "%.3f", result.averageConfidence)), words: \(result.readableWords)/\(result.totalWords))")
             
             let isBlurry = !result.isReadable
-            print("\(Self.TAG): Blur detection result: \(isBlurry ? "BLURRY" : "SHARP") (returning \(isBlurry ? 1.0 : 0.0))")
             
             return isBlurry
         } catch {
-            print("\(Self.TAG): Error during text recognition: \(error)")
             return false // Default to not blurry on error
         }
     }
@@ -79,7 +73,6 @@ class TextRecognitionBlurHelper {
         var result: [String: Any] = [:]
         
         if !isInitialized {
-            print("\(Self.TAG): Text recognition helper not initialized")
             result["isBlur"] = false
             result["textConfidence"] = 0.0
             result["wordCount"] = 0
@@ -98,12 +91,10 @@ class TextRecognitionBlurHelper {
             result["readableWords"] = recognitionResult.readableWords
             result["hasText"] = recognitionResult.totalWords > 0
             
-            print("\(Self.TAG): Text Recognition Result - Readable: \(recognitionResult.isReadable), Confidence: \(String(format: "%.3f", recognitionResult.averageConfidence)), Words: \(recognitionResult.readableWords)/\(recognitionResult.totalWords)")
             
             return result
             
         } catch {
-            print("\(Self.TAG): Error during text recognition: \(error)")
             result["isBlur"] = false
             result["textConfidence"] = 0.0
             result["wordCount"] = 0
@@ -180,7 +171,6 @@ class TextRecognitionBlurHelper {
         var allText = ""
         var readableText = ""
         
-        print("\(Self.TAG): === Text Recognition Analysis ===")
         
         for observation in observations {
             // Get the top candidate for each observation
@@ -189,7 +179,6 @@ class TextRecognitionBlurHelper {
             let text = topCandidate.string
             let visionConfidence = Double(topCandidate.confidence)
             
-            print("\(Self.TAG): Text Block: '\(text)' (Vision confidence: \(String(format: "%.3f", visionConfidence)))")
             allText += text + " "
             
             // Split text into words for individual analysis
@@ -204,16 +193,13 @@ class TextRecognitionBlurHelper {
                     let wordConfidence = estimateWordConfidence(word: trimmedWord, visionConfidence: visionConfidence)
                     totalConfidence += wordConfidence
                     
-                    print("\(Self.TAG):     Word: '\(trimmedWord)' | Confidence: \(String(format: "%.3f", wordConfidence)) | Readable: \(wordConfidence >= Self.MIN_WORD_CONFIDENCE ? "YES" : "NO")")
                     
                     if wordConfidence >= Self.MIN_WORD_CONFIDENCE {
                         // Optional dictionary check for enhanced validation
                         if !useDictionaryCheck || isInDictionary(word: trimmedWord) {
                             readableWords += 1
                             readableText += trimmedWord + " "
-                            print("\(Self.TAG):       ✓ Added to readable words (dict check: \(useDictionaryCheck ? (isInDictionary(word: trimmedWord) ? "PASS" : "FAIL") : "SKIPPED"))")
                         } else {
-                            print("\(Self.TAG):       ✗ Failed dictionary check")
                         }
                     }
                 }
@@ -229,15 +215,6 @@ class TextRecognitionBlurHelper {
                         (readableWords >= max(1, Int(Double(totalWords) * Self.AT_LEAST_N_PERCENT_OF_WORDS_ARE_READABLE)) ||
                          averageConfidence >= Self.AT_LEAST_N_PERCENT_OF_AVERAGE_CONFIDENCE)
         
-        // Log summary
-        print("\(Self.TAG): === Text Recognition Summary ===")
-        print("\(Self.TAG): All detected text: '\(allText.trimmingCharacters(in: .whitespaces))'")
-        print("\(Self.TAG): Readable text: '\(readableText.trimmingCharacters(in: .whitespaces))'")
-        print("\(Self.TAG): Total words: \(totalWords) | Readable words: \(readableWords) | Average confidence: \(String(format: "%.3f", averageConfidence))")
-        
-        let readabilityPercentage = totalWords > 0 ? (Double(readableWords) * 100.0 / Double(totalWords)) : 0.0
-        print("\(Self.TAG): Readability threshold: \(String(format: "%.1f", readabilityPercentage))% (need \(String(format: "%.1f", Self.AT_LEAST_N_PERCENT_OF_WORDS_ARE_READABLE * 100.0))%) | Result: \(isReadable ? "READABLE" : "BLURRY")")
-        print("\(Self.TAG): ================================")
         
         return TextRecognitionResult(isReadable: isReadable, averageConfidence: averageConfidence, totalWords: totalWords, readableWords: readableWords)
     }
@@ -282,7 +259,6 @@ class TextRecognitionBlurHelper {
         if word.range(of: specialCharPattern, options: .regularExpression) != nil {
             confidence -= 0.05
         }
-        print("\(Self.TAG): Readability confidence: \(String(format: "%.3f", confidence))")
         
         return max(0.0, min(1.0, confidence))
     }
@@ -325,7 +301,6 @@ class TextRecognitionBlurHelper {
      */
     func setDictionaryCheckEnabled(_ enable: Bool) {
         useDictionaryCheck = enable
-        print("\(Self.TAG): Dictionary check \(enable ? "enabled" : "disabled")")
     }
     
     /**
@@ -341,6 +316,5 @@ class TextRecognitionBlurHelper {
      */
     func close() {
         isInitialized = false
-        print("\(Self.TAG): Text recognition helper closed")
     }
 }

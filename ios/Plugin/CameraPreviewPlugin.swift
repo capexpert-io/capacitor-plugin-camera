@@ -43,7 +43,6 @@ public class CameraPreviewPlugin: CAPPlugin, AVCaptureVideoDataOutputSampleBuffe
         // Get quality parameter from initialization, default to 95% if not specified
         if let quality = call.getInt("quality") {
             desiredJpegQuality = CGFloat(max(1, min(100, quality))) / 100.0
-            print("Camera initialized with JPEG quality: \(desiredJpegQuality)")
         }
         
         // Check camera permission status first
@@ -81,8 +80,6 @@ public class CameraPreviewPlugin: CAPPlugin, AVCaptureVideoDataOutputSampleBuffe
             // Initialize TFLite blur detection helper
             self.blurDetectionHelper = BlurDetectionHelper()
             let tfliteInitialized = self.blurDetectionHelper?.initialize() ?? false
-            print("TFLite blur detection initialized: \(tfliteInitialized)")
-            
             // Only initialize capture session if permission is granted
             if authStatus == .authorized {
                 self.initializeCaptureSession(enableVideoRecording: false)
@@ -495,8 +492,6 @@ public class CameraPreviewPlugin: CAPPlugin, AVCaptureVideoDataOutputSampleBuffe
                 return
             }
 
-            //print("lastValidOrientation: ",lastValidOrientation)
-            //print("degree: ",degree)
             let image = UIImage(cgImage: cgImage)
             var normalized = normalizedImage(image)
             if self.scanRegion != nil {
@@ -515,7 +510,6 @@ public class CameraPreviewPlugin: CAPPlugin, AVCaptureVideoDataOutputSampleBuffe
                 if shouldCheckBlur {
                     let confidence = calculateBlurConfidence(image: normalized)
                     ret["confidence"] = confidence
-                    print("Blur detection - Confidence: \(confidence)")
                 } else {
                     print("Blur detection disabled for performance")
                 }
@@ -788,9 +782,6 @@ public class CameraPreviewPlugin: CAPPlugin, AVCaptureVideoDataOutputSampleBuffe
     {
         let tempName = NSUUID().uuidString
         let tempPath = (NSTemporaryDirectory() as NSString).appendingPathComponent((tempName as NSString).appendingPathExtension("mov")!)
-        
-        print("Temp path: \(tempPath)")
-        
         return URL(fileURLWithPath: tempPath)
     }
     
