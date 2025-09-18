@@ -290,7 +290,7 @@ stopCamera() => Promise<void>
 ### takeSnapshot(...)
 
 ```typescript
-takeSnapshot(options: { quality?: number; checkBlur?: boolean; }) => Promise<{ base64: string; confidence?: number; }>
+takeSnapshot(options: { quality?: number; checkBlur?: boolean; }) => Promise<{ base64: string; confidence?: number; boundingBoxes?: number[][]; }>
 ```
 
 take a snapshot as base64.
@@ -299,7 +299,7 @@ take a snapshot as base64.
 | ------------- | ------------------------------------------------------- |
 | **`options`** | <code>{ quality?: number; checkBlur?: boolean; }</code> |
 
-**Returns:** <code>Promise&lt;{ base64: string; confidence?: number; }&gt;</code>
+**Returns:** <code>Promise&lt;{ base64: string; confidence?: number; boundingBoxes?: number[][]; }&gt;</code>
 
 --------------------
 

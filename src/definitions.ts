@@ -23,7 +23,7 @@ export interface CameraPreviewPlugin {
   /**
   * take a snapshot as base64.
   */
-  takeSnapshot(options:{quality?:number, checkBlur?:boolean}): Promise<{base64:string, confidence?: number}>;
+  takeSnapshot(options:{quality?:number, checkBlur?:boolean}): Promise<{base64:string, confidence?: number, boundingBoxes?: number[][]}>;
   /**
   * analyze an image for blur detection with detailed confidence scores.
   */

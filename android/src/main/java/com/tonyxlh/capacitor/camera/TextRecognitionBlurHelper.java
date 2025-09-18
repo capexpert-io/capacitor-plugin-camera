@@ -16,6 +16,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.List;
+import java.util.ArrayList;
 
 /**
  * Text Recognition Blur Detection Helper using Google ML Kit
@@ -80,7 +82,7 @@ public class TextRecognitionBlurHelper {
     /**
      * Detect blur with detailed confidence scores
      * @param bitmap Input image bitmap
-     * @return Map with isBlur, textConfidence, wordCount, and readableWords
+     * @return Map with isBlur, textConfidence, wordCount, readableWords, and boundingBoxes
      */
     public java.util.Map<String, Object> detectBlurWithConfidence(Bitmap bitmap) {
         java.util.Map<String, Object> result = new java.util.HashMap<>();
@@ -90,6 +92,7 @@ public class TextRecognitionBlurHelper {
             result.put("textConfidence", 0.0);
             result.put("wordCount", 0);
             result.put("readableWords", 0);
+            result.put("boundingBoxes", new ArrayList<>());
             result.put("error", "Text recognizer not initialized");
             return result;
         }
@@ -98,11 +101,13 @@ public class TextRecognitionBlurHelper {
             TextRecognitionResult recognitionResult = detectTextWithConfidence(bitmap);
             
             result.put("isBlur", !recognitionResult.isReadable);
+            result.put("blurConfidence", recognitionResult.averageConfidence);            
+            result.put("boundingBoxes", recognitionResult.boundingBoxes);
             result.put("textConfidence", recognitionResult.averageConfidence);
             result.put("wordCount", recognitionResult.totalWords);
             result.put("readableWords", recognitionResult.readableWords);
             result.put("hasText", recognitionResult.totalWords > 0);
-            
+
             
             return result;
             
@@ -111,6 +116,7 @@ public class TextRecognitionBlurHelper {
             result.put("textConfidence", 0.0);
             result.put("wordCount", 0);
             result.put("readableWords", 0);
+            result.put("boundingBoxes", new ArrayList<>());
             result.put("error", e.getMessage());
             return result;
         }
@@ -149,19 +155,19 @@ public class TextRecognitionBlurHelper {
             // Wait for result with timeout
             boolean completed = latch.await(TIMEOUT_MS, TimeUnit.MILLISECONDS);
             if (!completed) {
-                return new TextRecognitionResult(false, 0.0, 0, 0);
+                return new TextRecognitionResult(false, 0.0, 0, 0, new ArrayList<>());
             }
             
             if (hasError.get()) {
-                return new TextRecognitionResult(false, 0.0, 0, 0);
+                return new TextRecognitionResult(false, 0.0, 0, 0, new ArrayList<>());
             }
             
             TextRecognitionResult result = resultRef.get();
-            return result != null ? result : new TextRecognitionResult(false, 0.0, 0, 0);
+            return result != null ? result : new TextRecognitionResult(false, 0.0, 0, 0, new ArrayList<>());
             
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return new TextRecognitionResult(false, 0.0, 0, 0);
+            return new TextRecognitionResult(false, 0.0, 0, 0, new ArrayList<>());
         }
     }
 
@@ -176,11 +182,11 @@ public class TextRecognitionBlurHelper {
         double totalConfidence = 0.0;
         StringBuilder allText = new StringBuilder();
         StringBuilder readableText = new StringBuilder();
-        
+        List<List<Double>> boundingBoxes = new ArrayList<>();
         
         for (Text.TextBlock block : visionText.getTextBlocks()) {
             allText.append(block.getText()).append(" ");
-            
+
             for (Text.Line line : block.getLines()) {
                 
                 for (Text.Element element : line.getElements()) {
@@ -193,6 +199,22 @@ public class TextRecognitionBlurHelper {
                         double confidence = estimateWordConfidence(element, text);
                         totalConfidence += confidence;
                         
+                        // Extract bounding box coordinates - try element first, then line as fallback
+                        android.graphics.Rect boundingBox = element.getBoundingBox();
+                        if (boundingBox == null) {
+                            // Fallback to line-level bounding box
+                            boundingBox = line.getBoundingBox();
+                            Log.d(TAG, "Element bounding box null, using line bounding box for text: '" + text + "'");
+                        }
+                        
+                        if (boundingBox != null) {
+                            List<Double> box = new ArrayList<>();
+                            box.add((double) boundingBox.left);   // top x
+                            box.add((double) boundingBox.top);    // top y
+                            box.add((double) boundingBox.right);  // bottom x
+                            box.add((double) boundingBox.bottom); // bottom y
+                            boundingBoxes.add(box);
+                        }
                         
                         if (confidence >= MIN_WORD_CONFIDENCE) {
                             // Optional dictionary check for enhanced validation
@@ -216,7 +238,8 @@ public class TextRecognitionBlurHelper {
                                (readableWords >= Math.max(1, totalWords * AT_LEAST_N_PERCENT_OF_WORDS_ARE_READABLE) || averageConfidence >= AT_LEAST_N_PERCENT_OF_AVERAGE_CONFIDENCE);
         
         
-        return new TextRecognitionResult(isReadable, averageConfidence, totalWords, readableWords);
+        
+        return new TextRecognitionResult(isReadable, averageConfidence, totalWords, readableWords, boundingBoxes);
     }
 
     /**
@@ -331,12 +354,14 @@ public class TextRecognitionBlurHelper {
         final double averageConfidence;
         final int totalWords;
         final int readableWords;
+        final List<List<Double>> boundingBoxes;
 
-        TextRecognitionResult(boolean isReadable, double averageConfidence, int totalWords, int readableWords) {
+        TextRecognitionResult(boolean isReadable, double averageConfidence, int totalWords, int readableWords, List<List<Double>> boundingBoxes) {
             this.isReadable = isReadable;
             this.averageConfidence = averageConfidence;
             this.totalWords = totalWords;
             this.readableWords = readableWords;
+            this.boundingBoxes = boundingBoxes;
         }
     }
 }

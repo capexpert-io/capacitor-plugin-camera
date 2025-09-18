@@ -364,6 +364,7 @@ public class BlurDetectionHelper {
                     result.put("wordCount", textResult.get("wordCount"));
                     result.put("readableWords", textResult.get("readableWords"));
                     result.put("hasText", true);
+                    result.put("boundingBoxes", textResult.get("boundingBoxes"));
                     
                     // Set blur/sharp confidence based on text recognition result
                     if (isBlur != null && textConfidence != null) {
@@ -414,6 +415,7 @@ public class BlurDetectionHelper {
             result.put("sharpConfidence", sharpConfidence);
             result.put("laplacianScore", laplacianScore);
             result.put("hasText", false);
+            result.put("boundingBoxes", new java.util.ArrayList<>());
             return result;
         }
 
@@ -456,6 +458,7 @@ public class BlurDetectionHelper {
             result.put("isBlur", isBlur);
             result.put("blurConfidence", blurConfidence);
             result.put("sharpConfidence", sharpConfidence);
+            result.put("boundingBoxes", new java.util.ArrayList<>());
             return result;
             
         } catch (Exception e) {
@@ -469,6 +472,7 @@ public class BlurDetectionHelper {
             result.put("isBlur", isBlur);
             result.put("blurConfidence", blurConfidence);
             result.put("sharpConfidence", sharpConfidence);
+            result.put("boundingBoxes", new java.util.ArrayList<>());
             return result;
         }
     }

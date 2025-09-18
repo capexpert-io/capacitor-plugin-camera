@@ -508,8 +508,23 @@ public class CameraPreviewPlugin: CAPPlugin, AVCaptureVideoDataOutputSampleBuffe
                 // Only detect blur if checkBlur option is true
                 let shouldCheckBlur = takeSnapshotCall.getBool("checkBlur", false)
                 if shouldCheckBlur {
-                    let confidence = calculateBlurConfidence(image: normalized)
-                    ret["confidence"] = confidence
+                    // Get blur detection result with bounding boxes in one call
+                    if let helper = blurDetectionHelper, helper.getIsInitialized() {
+                        let blurResult = helper.detectBlurWithConfidence(image: normalized)
+                        if let blurConfidence = blurResult["blurConfidence"] as? Double {
+                            ret["confidence"] = blurConfidence
+                        }
+                        if let boundingBoxes = blurResult["boundingBoxes"] as? [[Double]] {
+                            ret["boundingBoxes"] = boundingBoxes
+                        } else {
+                            ret["boundingBoxes"] = [[Double]]()
+                        }
+                    } else {
+                        // Fallback to Laplacian algorithm
+                        let confidence = calculateBlurConfidence(image: normalized)
+                        ret["confidence"] = confidence
+                        ret["boundingBoxes"] = [[Double]]()
+                    }
                 } else {
                     print("Blur detection disabled for performance")
                 }

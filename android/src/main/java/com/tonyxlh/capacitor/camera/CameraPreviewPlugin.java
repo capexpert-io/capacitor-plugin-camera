@@ -220,8 +220,26 @@ public class CameraPreviewPlugin extends Plugin {
                         // Only detect blur if checkBlur option is true
                         boolean shouldCheckBlur = takeSnapshotCall.getBoolean("checkBlur", false);
                         if (shouldCheckBlur) {
-                            double confidence = calculateBlurConfidence(bitmap);
-                            result.put("confidence", confidence);
+                            // Get blur detection result with bounding boxes in one call
+                            if (blurDetectionHelper != null && blurDetectionHelper.isInitialized()) {
+                                java.util.Map<String, Object> blurResult = blurDetectionHelper.detectBlurWithConfidence(bitmap);
+                                
+                                Double blurConfidence = (Double) blurResult.get("blurConfidence");
+                                if (blurConfidence != null) {
+                                    result.put("confidence", blurConfidence);
+                                }
+                                if (blurResult.containsKey("boundingBoxes")) {
+                                    Object boundingBoxesObj = blurResult.get("boundingBoxes");
+                                    result.put("boundingBoxes", boundingBoxesObj);
+                                } else {
+                                    result.put("boundingBoxes", new java.util.ArrayList<>());
+                                }
+                            } else {
+                                // Fallback to Laplacian algorithm
+                                double confidence = calculateBlurConfidence(bitmap);
+                                result.put("confidence", confidence);
+                                result.put("boundingBoxes", new java.util.ArrayList<>());
+                            }
                         } else {
                             Log.d("Camera", "Blur detection disabled for performance");
                         }

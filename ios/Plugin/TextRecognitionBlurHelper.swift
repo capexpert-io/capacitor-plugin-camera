@@ -24,6 +24,7 @@ class TextRecognitionBlurHelper {
         let averageConfidence: Double
         let totalWords: Int
         let readableWords: Int
+        let boundingBoxes: [[Double]]
     }
     
     init() {
@@ -67,7 +68,7 @@ class TextRecognitionBlurHelper {
     /**
      * Detect blur with detailed confidence scores
      * @param image Input UIImage
-     * @return Dictionary with isBlur, textConfidence, wordCount, and readableWords
+     * @return Dictionary with isBlur, textConfidence, wordCount, readableWords, and boundingBoxes
      */
     func detectBlurWithConfidence(image: UIImage) -> [String: Any] {
         var result: [String: Any] = [:]
@@ -78,6 +79,7 @@ class TextRecognitionBlurHelper {
             result["wordCount"] = 0
             result["readableWords"] = 0
             result["hasText"] = false
+            result["boundingBoxes"] = [[Double]]()
             result["error"] = "Text recognition helper not initialized"
             return result
         }
@@ -90,6 +92,7 @@ class TextRecognitionBlurHelper {
             result["wordCount"] = recognitionResult.totalWords
             result["readableWords"] = recognitionResult.readableWords
             result["hasText"] = recognitionResult.totalWords > 0
+            result["boundingBoxes"] = recognitionResult.boundingBoxes
             
             
             return result
@@ -100,6 +103,7 @@ class TextRecognitionBlurHelper {
             result["wordCount"] = 0
             result["readableWords"] = 0
             result["hasText"] = false
+            result["boundingBoxes"] = [[Double]]()
             result["error"] = error.localizedDescription
             return result
         }
@@ -132,7 +136,7 @@ class TextRecognitionBlurHelper {
             }
             
             guard let observations = request.results as? [VNRecognizedTextObservation] else {
-                recognitionResult = TextRecognitionResult(isReadable: false, averageConfidence: 0.0, totalWords: 0, readableWords: 0)
+                recognitionResult = TextRecognitionResult(isReadable: false, averageConfidence: 0.0, totalWords: 0, readableWords: 0, boundingBoxes: [])
                 return
             }
             
@@ -156,7 +160,7 @@ class TextRecognitionBlurHelper {
             throw error
         }
         
-        return recognitionResult ?? TextRecognitionResult(isReadable: false, averageConfidence: 0.0, totalWords: 0, readableWords: 0)
+        return recognitionResult ?? TextRecognitionResult(isReadable: false, averageConfidence: 0.0, totalWords: 0, readableWords: 0, boundingBoxes: [])
     }
     
     /**
@@ -170,16 +174,28 @@ class TextRecognitionBlurHelper {
         var totalConfidence = 0.0
         var allText = ""
         var readableText = ""
-        
+        var boundingBoxes: [[Double]] = []
         
         for observation in observations {
             // Get the top candidate for each observation
-            guard let topCandidate = observation.topCandidates(1).first else { continue }
+            guard let topCandidate = observation.topCandidates(1).first else { 
+                print("TextRecognitionBlurHelper: No top candidate found for observation")
+                continue 
+            }
             
             let text = topCandidate.string
             let visionConfidence = Double(topCandidate.confidence)
             
             allText += text + " "
+            // Extract bounding box coordinates from observation
+            let boundingBox = observation.boundingBox
+            let box: [Double] = [
+                Double(boundingBox.minX),  // top x
+                Double(boundingBox.minY),  // top y
+                Double(boundingBox.maxX),  // bottom x
+                Double(boundingBox.maxY)   // bottom y
+            ]
+            boundingBoxes.append(box)
             
             // Split text into words for individual analysis
             let words = text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
@@ -216,7 +232,7 @@ class TextRecognitionBlurHelper {
                          averageConfidence >= Self.AT_LEAST_N_PERCENT_OF_AVERAGE_CONFIDENCE)
         
         
-        return TextRecognitionResult(isReadable: isReadable, averageConfidence: averageConfidence, totalWords: totalWords, readableWords: readableWords)
+        return TextRecognitionResult(isReadable: isReadable, averageConfidence: averageConfidence, totalWords: totalWords, readableWords: readableWords, boundingBoxes: boundingBoxes)
     }
     
     /**

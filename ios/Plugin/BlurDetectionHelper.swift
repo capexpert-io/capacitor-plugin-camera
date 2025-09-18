@@ -319,6 +319,7 @@ class BlurDetectionHelper {
                 result["wordCount"] = textResult["wordCount"]
                 result["readableWords"] = textResult["readableWords"]
                 result["hasText"] = true
+                result["boundingBoxes"] = textResult["boundingBoxes"]
                 
                 // Set blur/sharp confidence based on text recognition result
                 if let isBlur = isBlur, let textConfidence = textConfidence {
@@ -365,7 +366,8 @@ class BlurDetectionHelper {
                 "blurConfidence": blurConfidence,
                 "sharpConfidence": sharpConfidence,
                 "laplacianScore": laplacianScore,
-                "hasText": false
+                "hasText": false,
+                "boundingBoxes": [[Double]]()
             ]
         }
         
@@ -416,7 +418,8 @@ class BlurDetectionHelper {
                 "isBlur": isBlur,
                 "blurConfidence": blurConfidence,
                 "sharpConfidence": sharpConfidence,
-                "hasText": false
+                "hasText": false,
+                "boundingBoxes": [[Double]]()
             ]
             
         } catch {
@@ -433,7 +436,8 @@ class BlurDetectionHelper {
                 "blurConfidence": blurConfidence,
                 "sharpConfidence": sharpConfidence,
                 "laplacianScore": laplacianScore,
-                "hasText": false
+                "hasText": false,
+                "boundingBoxes": [[Double]]()
             ]
         }
     }

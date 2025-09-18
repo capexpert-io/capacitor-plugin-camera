@@ -240,7 +240,7 @@ export class CameraPreviewWeb extends WebPlugin implements CameraPreviewPlugin {
     }
   }
 
-  async takeSnapshot(options:{quality?:number, checkBlur?:boolean}): Promise<{ base64: string, confidence?: number }> {
+  async takeSnapshot(options:{quality?:number, checkBlur?:boolean}): Promise<{ base64: string, confidence?: number, boundingBoxes?: number[][] }> {
     if (this.camera) {
       let desiredQuality = this.desiredJpegQuality;
       if (options?.quality !== undefined) {
@@ -258,7 +258,8 @@ export class CameraPreviewWeb extends WebPlugin implements CameraPreviewPlugin {
           const blurResult = this.detectBlurWeb(imageData, canvas.width, canvas.height);
           return {
             base64: base64,
-            confidence: Math.max(0, Math.min(1, blurResult.blurScore / 300))
+            confidence: Math.max(0, Math.min(1, blurResult.blurScore / 300)),
+            boundingBoxes: [] // Web implementation doesn't support text detection
           };
         }
       }
