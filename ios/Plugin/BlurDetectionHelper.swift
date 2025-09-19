@@ -1,10 +1,11 @@
 import Foundation
 import UIKit
 import TensorFlowLite
+import Vision
 
 /**
- * TensorFlow Lite Blur Detection Helper for iOS
- * Based on MobileNetV2 model trained for blur detection
+ * Comprehensive Blur Detection Helper for iOS
+ * Implements the 3-step pipeline: Object Detection -> Text Detection -> Full-Image Blur Detection
  */
 class BlurDetectionHelper {
     
@@ -15,16 +16,41 @@ class BlurDetectionHelper {
     private static let NUM_CHANNELS = 3 // RGB
     private static let NUM_CLASSES = 2 // blur, sharp
     
+    // Timeout settings
+    private static let TIMEOUT_MS: TimeInterval = 5.0 // 5 second timeout
+    
+    // Text recognition settings
+    private static let MIN_WORD_CONFIDENCE: Double = 0.8 // 80% confidence threshold
+    private static let AT_LEAST_N_PERCENT_OF_WORDS_ARE_READABLE: Double = 0.6 // 60% of words are readable
+    private static let AT_LEAST_N_PERCENT_OF_AVERAGE_CONFIDENCE: Double = 0.85 // 85% of average confidence
+    
     private var interpreter: Interpreter?
     private var isInitialized = false
     
-    // Text recognition blur detection helper
-    private var textBlurHelper: TextRecognitionBlurHelper?
+    // Configuration flags
+    private var useObjectDetection = true
     private var useTextRecognition = true
+    private var useDictionaryCheck = false
+    
+    // Dictionary for text validation
+    private var commonWords: Set<String>
+    
+    // Executor for parallel processing
+    private let processingQueue = DispatchQueue(label: "blur.detection.queue", qos: .userInitiated)
+    
+    // Text recognition result structure
+    private struct TextRecognitionResult {
+        let isReadable: Bool
+        let averageConfidence: Double
+        let totalWords: Int
+        let readableWords: Int
+        let boundingBoxes: [[Double]]
+    }
     
     init() {
-        // Initialize text recognition blur helper
-        textBlurHelper = TextRecognitionBlurHelper()
+        // Initialize common words dictionary
+        commonWords = Set<String>()
+        initializeCommonWords()
     }
     
     /**
@@ -62,37 +88,122 @@ class BlurDetectionHelper {
     }
     
     /**
-     * Detect blur in image using hybrid approach (Text Recognition + TFLite)
+     * Main blur detection method implementing the 3-step pipeline
      * @param image Input UIImage
      * @return Blur confidence score (0.0 = sharp, 1.0 = very blurry)
      */
     func detectBlur(image: UIImage) -> Double {
+        let result = detectBlurWithConfidence(image: image)
+        let isBlur = result["isBlur"] as? Bool ?? false
+        return isBlur ? 1.0 : 0.0
+    }
+    
+    /**
+     * Detect blur with detailed confidence scores using the 3-step pipeline
+     * @param image Input UIImage
+     * @return Dictionary with comprehensive blur detection results
+     */
+    func detectBlurWithConfidence(image: UIImage) -> [String: Any] {
+        var result: [String: Any] = [:]
         
-        // First try text recognition if enabled
-        if useTextRecognition, let textHelper = textBlurHelper, textHelper.getIsInitialized() {
-            
-            let textResult = textHelper.detectBlurWithConfidence(image: image)
-            let hasText = textResult["hasText"] as? Bool ?? false
-            
-            if hasText {
-                // Image contains text, use text recognition result
-                let isBlur = textResult["isBlur"] as? Bool
-                let textConfidence = textResult["textConfidence"] as? Double
-                let wordCount = textResult["wordCount"] as? Int
-                let readableWords = textResult["readableWords"] as? Int
-                
-                
-                if let isBlur = isBlur {
-                    let blurConfidence = isBlur ? 1.0 : 0.0
-                    return blurConfidence
-                } else {
-                }
-            } else {
-            }
+        if !isInitialized {
+            result["isBlur"] = false
+            result["method"] = "none"
+            result["error"] = "Blur detector not initialized"
+            return result
         }
         
-        // Fallback to TFLite model
-        return detectBlurWithTFLite(image: image)
+        do {
+            // Step 1: Object Detection (Preferred Path)
+            if useObjectDetection {
+                print("\(Self.TAG): Step 1: Trying Object Detection")
+                let objects = detectObjects(image: image)
+                
+                if !objects.isEmpty {
+                    print("\(Self.TAG): Objects detected: \(objects.count)")
+                    
+                    // Process ROIs from detected objects
+                    var roiResults: [[String: Any]] = []
+                    var anyBlurry = false
+                    
+                    for object in objects {
+                        let boundingBox = object.boundingBox
+                        // Crop ROI from original image
+                        if let roi = cropImage(image: image, rect: boundingBox) {
+                            // Run TFLite blur detection on ROI
+                            var roiResult = detectBlurWithTFLiteConfidence(image: roi)
+                            
+                            print("\(Self.TAG): Object Detection ROI Result isBlur: \(roiResult["isBlur"] ?? false)")
+                            roiResult["boundingBox"] = [
+                                boundingBox.minX,
+                                boundingBox.minY,
+                                boundingBox.maxX,
+                                boundingBox.maxY
+                            ]
+                            roiResults.append(roiResult)
+                            
+                            let isBlur = roiResult["isBlur"] as? Bool ?? false
+                            if isBlur {
+                                anyBlurry = true
+                            }
+                        }
+                    }
+                    
+                    result["method"] = "object_detection"
+                    result["isBlur"] = anyBlurry
+                    result["roiResults"] = roiResults
+                    result["objectCount"] = objects.count
+                    return result
+                }
+            }
+            
+            // Step 2: Text Detection (Fallback if Object Not Found)
+            if useTextRecognition {
+                print("\(Self.TAG): Step 2: Trying Text Detection")
+                let textResult = detectTextWithBoundingBoxes(image: image)
+                
+                if textResult.totalWords > 0 {
+                    print("\(Self.TAG): Text detected: \(textResult.totalWords) words")
+                    
+                    // Get top 3 largest text areas combined into a single bounding box
+                    let topTextAreas = getTopTextAreas(boundingBoxes: textResult.boundingBoxes, topN: 3)
+                    
+                    if !topTextAreas.isEmpty {
+                        // Process ROIs from text areas
+                        let roiResults = processROIsInParallel(image: image, rois: topTextAreas)
+                        
+                        // Check if any ROI is blurry
+                        var anyBlurry = false
+                        for roiResult in roiResults {
+                            let isBlur = roiResult["isBlur"] as? Bool ?? false
+                            if isBlur {
+                                anyBlurry = true
+                                break
+                            }
+                        }
+                        
+                        result["method"] = "text_detection"
+                        result["isBlur"] = anyBlurry
+                        result["roiResults"] = roiResults
+                        result["textConfidence"] = textResult.averageConfidence
+                        result["wordCount"] = textResult.totalWords
+                        result["readableWords"] = textResult.readableWords
+                        return result
+                    }
+                }
+            }
+            
+            // Step 3: Full-Image Blur Detection (Final Fallback)
+            print("\(Self.TAG): Step 3: Using Full-Image Blur Detection")
+            return detectBlurWithTFLiteConfidence(image: image)
+            
+        } catch {
+            print("\(Self.TAG): Error in blur detection pipeline: \(error.localizedDescription)")
+            result["isBlur"] = false
+            result["method"] = "error"
+            result["error"] = error.localizedDescription
+            return result
+        }
     }
     
     /**
@@ -136,7 +247,7 @@ class BlurDetectionHelper {
             let sharpConfidence = probabilities.count > 1 ? Double(probabilities[1]) : 0.0
             
             // Determine if image is blurry using TFLite confidence
-            let isBlur = (blurConfidence >= 0.99 || sharpConfidence < 0.1)
+            let isBlur = sharpConfidence < 0.80
 
             
             // Return 1.0 for blur, 0.0 for sharp (to maintain double return type)
@@ -296,56 +407,6 @@ class BlurDetectionHelper {
     
 
 
-    /**
-     * Detect blur with detailed confidence scores using hybrid approach
-     * @param image Input UIImage
-     * @return Dictionary with comprehensive blur detection results
-     */
-    func detectBlurWithConfidence(image: UIImage) -> [String: Any] {
-        // Try text recognition first if enabled
-        if useTextRecognition, let textHelper = textBlurHelper, textHelper.getIsInitialized() {
-            let textResult = textHelper.detectBlurWithConfidence(image: image)
-            let hasText = textResult["hasText"] as? Bool ?? false
-            
-            if hasText {
-                // Image contains text, use text recognition result
-                let isBlur = textResult["isBlur"] as? Bool
-                let textConfidence = textResult["textConfidence"] as? Double
-                
-                var result: [String: Any] = [:]
-                result["method"] = "text_recognition"
-                result["isBlur"] = isBlur
-                result["textConfidence"] = textConfidence
-                result["wordCount"] = textResult["wordCount"]
-                result["readableWords"] = textResult["readableWords"]
-                result["hasText"] = true
-                result["boundingBoxes"] = textResult["boundingBoxes"]
-                
-                // Set blur/sharp confidence based on text recognition result
-                if let isBlur = isBlur, let textConfidence = textConfidence {
-                    if isBlur {
-                        // Image is blurry - high blur confidence, low sharp confidence
-                        result["blurConfidence"] = 1.0
-                        result["sharpConfidence"] = 0.0
-                    } else {
-                        // Image is sharp - low blur confidence, high sharp confidence
-                        result["blurConfidence"] = 1.0 - textConfidence
-                        result["sharpConfidence"] = textConfidence
-                    }
-                } else {
-                    // Default values if confidence not available
-                    result["blurConfidence"] = (isBlur ?? false) ? 1.0 : 0.0
-                    result["sharpConfidence"] = (isBlur ?? true) ? 0.0 : 1.0
-                }
-                
-                
-                return result
-            }
-        }
-        
-        // Fallback to TFLite model
-        return detectBlurWithTFLiteConfidence(image: image)
-    }
     
     /**
      * Detect blur with detailed confidence scores using TFLite only
@@ -410,7 +471,7 @@ class BlurDetectionHelper {
             let sharpConfidence = probabilities.count > 1 ? Double(probabilities[1]) : 0.0
             
             // Determine if image is blurry using TFLite confidence
-            let isBlur = (blurConfidence >= 0.99 || sharpConfidence < 0.1)
+            let isBlur = sharpConfidence < 0.80
 
             
             return [
@@ -487,12 +548,201 @@ class BlurDetectionHelper {
         return useTextRecognition
     }
     
+    
     /**
-     * Get text recognition helper instance
-     * @return TextRecognitionBlurHelper instance
+     * Detect objects in the image using Vision framework
+     * @param image Input UIImage
+     * @return List of detected objects
      */
-    func getTextBlurHelper() -> TextRecognitionBlurHelper? {
-        return textBlurHelper
+    private func detectObjects(image: UIImage) -> [VNDetectedObjectObservation] {
+        guard let cgImage = image.cgImage else { return [] }
+        
+        let requestHandler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        
+        var detectedObjects: [VNDetectedObjectObservation] = []
+        let semaphore = DispatchSemaphore(value: 0)
+        
+        let request = VNDetectRectanglesRequest { (request, error) in
+            defer { semaphore.signal() }
+            
+            if let error = error {
+                print("\(Self.TAG): Object detection failed: \(error.localizedDescription)")
+                return
+            }
+            
+            guard let observations = request.results as? [VNDetectedObjectObservation] else {
+                return
+            }
+            
+            detectedObjects = observations
+        }
+        
+        // Configure for better detection
+        request.maximumObservations = 10
+        request.minimumAspectRatio = 0.1
+        request.maximumAspectRatio = 10.0
+        request.minimumSize = 0.01
+        request.minimumConfidence = 0.3
+        
+        do {
+            try requestHandler.perform([request])
+            
+            let timeout = DispatchTime.now() + Self.TIMEOUT_MS
+            if semaphore.wait(timeout: timeout) == .timedOut {
+                print("\(Self.TAG): Object detection timed out")
+            }
+        } catch {
+            print("\(Self.TAG): Object detection error: \(error.localizedDescription)")
+        }
+        
+        return detectedObjects
+    }
+    
+    /**
+     * Get the top N largest text areas and combine them into a single bounding box
+     * @param boundingBoxes List of bounding boxes
+     * @param topN Number of top areas to combine
+     * @return List containing a single combined bounding box
+     */
+    private func getTopTextAreas(boundingBoxes: [[Double]], topN: Int = 3) -> [CGRect] {
+        if boundingBoxes.isEmpty {
+            return []
+        }
+        
+        // Convert to CGRect and sort by area (largest first)
+        let rects = boundingBoxes.compactMap { box -> CGRect? in
+            guard box.count >= 4 else { return nil }
+            return CGRect(x: box[0], y: box[1], width: box[2] - box[0], height: box[3] - box[1])
+        }
+        
+        let sorted = rects.sorted { rect1, rect2 in
+            let area1 = rect1.width * rect1.height
+            let area2 = rect2.width * rect2.height
+            return area1 > area2
+        }
+        
+        // Get top N areas
+        let topAreas = Array(sorted.prefix(min(topN, sorted.count)))
+        
+        // Combine all top areas into a single bounding box
+        if topAreas.isEmpty {
+            return []
+        }
+        
+        // Find the minimum and maximum coordinates to create a combined bounding box
+        var minX = CGFloat.greatestFiniteMagnitude
+        var minY = CGFloat.greatestFiniteMagnitude
+        var maxX = -CGFloat.greatestFiniteMagnitude
+        var maxY = -CGFloat.greatestFiniteMagnitude
+        
+        for rect in topAreas {
+            minX = min(minX, rect.minX)
+            minY = min(minY, rect.minY)
+            maxX = max(maxX, rect.maxX)
+            maxY = max(maxY, rect.maxY)
+        }
+        
+        // Create a single combined bounding box
+        let combinedRect = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+        
+        print("\(Self.TAG): Combined \(topAreas.count) text areas into single bounding box: " +
+              "(\(minX), \(minY), \(maxX), \(maxY))")
+        
+        // Return list with single combined bounding box
+        return [combinedRect]
+    }
+    
+    /**
+     * Process multiple ROIs in parallel for blur detection
+     * @param image Original image
+     * @param rois List of regions of interest
+     * @return List of blur detection results for each ROI
+     */
+    private func processROIsInParallel(image: UIImage, rois: [CGRect]) -> [[String: Any]] {
+        var results: [[String: Any]] = []
+        let group = DispatchGroup()
+        let queue = DispatchQueue(label: "roi.processing", attributes: .concurrent)
+        
+        for roi in rois {
+            group.enter()
+            queue.async {
+                defer { group.leave() }
+                
+                if let cropped = self.cropImage(image: image, rect: roi) {
+                    var result = self.detectBlurWithTFLiteConfidence(image: cropped)
+                    result["boundingBox"] = [
+                        roi.minX,
+                        roi.minY,
+                        roi.maxX,
+                        roi.maxY
+                    ]
+                    
+                    DispatchQueue.main.async {
+                        results.append(result)
+                    }
+                }
+            }
+        }
+        
+        let timeout = DispatchTime.now() + Self.TIMEOUT_MS
+        _ = group.wait(timeout: timeout)
+        
+        return results
+    }
+    
+    /**
+     * Crop an image to the specified rectangle
+     * @param image Source image
+     * @param rect Rectangle to crop
+     * @return Cropped image or nil if invalid
+     */
+    private func cropImage(image: UIImage, rect: CGRect) -> UIImage? {
+        guard let cgImage = image.cgImage else { return nil }
+        
+        // Convert normalized coordinates to pixel coordinates
+        let imageSize = CGSize(width: cgImage.width, height: cgImage.height)
+        let cropRect = CGRect(
+            x: rect.minX * imageSize.width,
+            y: rect.minY * imageSize.height,
+            width: rect.width * imageSize.width,
+            height: rect.height * imageSize.height
+        )
+        
+        // Ensure bounds are within image
+        let clampedRect = CGRect(
+            x: max(0, cropRect.minX),
+            y: max(0, cropRect.minY),
+            width: min(imageSize.width - max(0, cropRect.minX), cropRect.width),
+            height: min(imageSize.height - max(0, cropRect.minY), cropRect.height)
+        )
+        
+        guard clampedRect.width > 0 && clampedRect.height > 0 else { return nil }
+        
+        if let croppedCGImage = cgImage.cropping(to: clampedRect) {
+            return UIImage(cgImage: croppedCGImage)
+        }
+        
+        return nil
+    }
+    
+    /**
+     * Initialize common English words for dictionary check
+     */
+    private func initializeCommonWords() {
+        let words = [
+            "the", "be", "to", "of", "and", "a", "in", "that", "have", "i", "it", "for", "not", "on", "with",
+            "he", "as", "you", "do", "at", "this", "but", "his", "by", "from", "they", "we", "say", "her",
+            "she", "or", "an", "will", "my", "one", "all", "would", "there", "their", "what", "so", "up",
+            "out", "if", "about", "who", "get", "which", "go", "me", "when", "make", "can", "like", "time",
+            "no", "just", "him", "know", "take", "people", "into", "year", "your", "good", "some", "could",
+            "them", "see", "other", "than", "then", "now", "look", "only", "come", "its", "over", "think",
+            "also", "back", "after", "use", "two", "how", "our", "work", "first", "well", "way", "even",
+            "new", "want", "because", "any", "these", "give", "day", "most", "us", "is", "was", "are",
+            "were", "been", "has", "had", "having", "does", "did", "doing", "can", "could", "should",
+            "would", "may", "might", "must", "shall", "will", "am", "being", "became", "become", "becomes"
+        ]
+        
+        commonWords = Set(words)
     }
     
     /**
@@ -500,8 +750,6 @@ class BlurDetectionHelper {
      */
     func close() {
         interpreter = nil
-        textBlurHelper?.close()
-        textBlurHelper = nil
         isInitialized = false
     }
     
@@ -510,5 +758,213 @@ class BlurDetectionHelper {
      */
     func getIsInitialized() -> Bool {
         return isInitialized
+    }
+    
+    /**
+     * Enable or disable object detection
+     * @param enable true to enable object detection
+     */
+    func setObjectDetectionEnabled(_ enable: Bool) {
+        useObjectDetection = enable
+    }
+    
+    /**
+     * Enable or disable text recognition
+     * @param enable true to enable text recognition
+     */
+    func setTextRecognitionEnabled(_ enable: Bool) {
+        useTextRecognition = enable
+    }
+    
+    /**
+     * Enable or disable dictionary check in text recognition
+     * @param enable true to enable dictionary check
+     */
+    func setDictionaryCheckEnabled(_ enable: Bool) {
+        useDictionaryCheck = enable
+    }
+    
+    /**
+     * Detect text in image with bounding boxes
+     * @param image Input UIImage
+     * @return TextRecognitionResult with bounding boxes
+     */
+    private func detectTextWithBoundingBoxes(image: UIImage) -> TextRecognitionResult {
+        guard let cgImage = image.cgImage else {
+            return TextRecognitionResult(isReadable: false, averageConfidence: 0.0, totalWords: 0, readableWords: 0, boundingBoxes: [])
+        }
+        
+        let requestHandler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        
+        var recognitionResult: TextRecognitionResult?
+        var recognitionError: Error?
+        
+        // Use semaphore for synchronous execution
+        let semaphore = DispatchSemaphore(value: 0)
+        
+        let request = VNRecognizeTextRequest { [weak self] (request, error) in
+            defer { semaphore.signal() }
+            
+            if let error = error {
+                recognitionError = error
+                return
+            }
+            
+            guard let observations = request.results as? [VNRecognizedTextObservation] else {
+                recognitionResult = TextRecognitionResult(isReadable: false, averageConfidence: 0.0, totalWords: 0, readableWords: 0, boundingBoxes: [])
+                return
+            }
+            
+            recognitionResult = self?.analyzeTextConfidence(observations: observations)
+        }
+        
+        // Configure text recognition for better accuracy
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = true
+        
+        // Perform text recognition
+        do {
+            try requestHandler.perform([request])
+            
+            // Wait for completion with timeout
+            let timeout = DispatchTime.now() + Self.TIMEOUT_MS
+            if semaphore.wait(timeout: timeout) == .timedOut {
+                recognitionError = NSError(domain: "TextRecognitionError", code: 2, userInfo: [NSLocalizedDescriptionKey: "Text recognition timed out"])
+            }
+        } catch {
+            recognitionError = error
+        }
+        
+        if let error = recognitionError {
+            print("\(Self.TAG): Text recognition error: \(error.localizedDescription)")
+            return TextRecognitionResult(isReadable: false, averageConfidence: 0.0, totalWords: 0, readableWords: 0, boundingBoxes: [])
+        }
+        
+        return recognitionResult ?? TextRecognitionResult(isReadable: false, averageConfidence: 0.0, totalWords: 0, readableWords: 0, boundingBoxes: [])
+    }
+    
+    /**
+     * Analyze text confidence and extract bounding boxes
+     * @param observations Recognized text observations from Vision framework
+     * @return TextRecognitionResult with analysis
+     */
+    private func analyzeTextConfidence(observations: [VNRecognizedTextObservation]) -> TextRecognitionResult {
+        var totalWords = 0
+        var readableWords = 0
+        var totalConfidence = 0.0
+        var allText = ""
+        var readableText = ""
+        var boundingBoxes: [[Double]] = []
+        
+        for observation in observations {
+            // Get the top candidate for each observation
+            guard let topCandidate = observation.topCandidates(1).first else { 
+                print("\(Self.TAG): No top candidate found for observation")
+                continue 
+            }
+            
+            let text = topCandidate.string
+            let visionConfidence = Double(topCandidate.confidence)
+            
+            allText += text + " "
+            // Extract bounding box coordinates from observation
+            let boundingBox = observation.boundingBox
+            let box: [Double] = [
+                Double(boundingBox.minX),  // top x
+                Double(boundingBox.minY),  // top y
+                Double(boundingBox.maxX),  // bottom x
+                Double(boundingBox.maxY)   // bottom y
+            ]
+            boundingBoxes.append(box)
+            
+            // Split text into words for individual analysis
+            let words = text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
+            
+            for word in words {
+                let trimmedWord = word.trimmingCharacters(in: .punctuationCharacters)
+                if !trimmedWord.isEmpty {
+                    totalWords += 1
+                    
+                    // Estimate word confidence based on Vision confidence and text characteristics
+                    let wordConfidence = estimateWordConfidence(word: trimmedWord, visionConfidence: visionConfidence)
+                    totalConfidence += wordConfidence
+                    
+                    if wordConfidence >= Self.MIN_WORD_CONFIDENCE {
+                        // Optional dictionary check for enhanced validation
+                        if !useDictionaryCheck || isInDictionary(word: trimmedWord) {
+                            readableWords += 1
+                            readableText += trimmedWord + " "
+                        }
+                    }
+                }
+            }
+        }
+        
+        let averageConfidence = totalWords > 0 ? totalConfidence / Double(totalWords) : 0.0
+        
+        // Image is readable if:
+        // 1. We have text AND
+        // 2. At least 60% of words are readable OR average confidence is high
+        let isReadable = totalWords > 0 &&
+                        (readableWords >= max(1, Int(Double(totalWords) * Self.AT_LEAST_N_PERCENT_OF_WORDS_ARE_READABLE)) ||
+                         averageConfidence >= Self.AT_LEAST_N_PERCENT_OF_AVERAGE_CONFIDENCE)
+        
+        return TextRecognitionResult(isReadable: isReadable, averageConfidence: averageConfidence, totalWords: totalWords, readableWords: readableWords, boundingBoxes: boundingBoxes)
+    }
+    
+    /**
+     * Estimate word confidence based on Vision confidence and text characteristics
+     * @param word The actual word text
+     * @param visionConfidence Confidence from Vision framework
+     * @return Estimated confidence score
+     */
+    private func estimateWordConfidence(word: String, visionConfidence: Double) -> Double {
+        // Start with base confidence (similar to Android implementation)
+        var confidence = 0.55
+        
+        // Apply text characteristic adjustments (similar to Android implementation)
+        
+        // Check text length (very short or very long words might be less reliable)
+        if word.count >= 3 && word.count <= 15 {
+            confidence += 0.2 // Boost confidence for reasonable length words
+        }
+        
+        // Check for common patterns that indicate good recognition
+        let alphanumericPattern = "^[a-zA-Z0-9\\s\\-\\.]+$"
+        if word.range(of: alphanumericPattern, options: .regularExpression) != nil {
+            confidence += 0.15
+        }
+        
+        // Check for mixed case (indicates good character recognition)
+        let hasLowercase = word.range(of: "[a-z]", options: .regularExpression) != nil
+        let hasUppercase = word.range(of: "[A-Z]", options: .regularExpression) != nil
+        if hasLowercase && hasUppercase {
+            confidence += 0.1
+        }
+        
+        // Check for numbers (often well recognized)
+        if word.range(of: "\\d", options: .regularExpression) != nil {
+            confidence += 0.1
+        }
+        
+        // Penalize for special characters that might indicate poor recognition
+        let specialCharPattern = "[^a-zA-Z0-9\\s\\-\\.]"
+        if word.range(of: specialCharPattern, options: .regularExpression) != nil {
+            confidence -= 0.1
+        }
+        
+        return max(0.0, min(1.0, confidence))
+    }
+    
+    /**
+     * Check if word is in common dictionary
+     * @param word Word to check
+     * @return true if word is in dictionary
+     */
+    private func isInDictionary(word: String) -> Bool {
+        guard !commonWords.isEmpty else { return false }
+        
+        let cleanWord = word.lowercased().replacingOccurrences(of: "[^a-zA-Z]", with: "", options: .regularExpression)
+        return commonWords.contains(cleanWord)
     }
 } 
