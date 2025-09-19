@@ -1,7 +1,7 @@
 import Foundation
 import UIKit
 import TensorFlowLite
-import Vision
+import MLKit
 
 /**
  * Comprehensive Blur Detection Helper for iOS
@@ -37,6 +37,10 @@ class BlurDetectionHelper {
     
     // Executor for parallel processing
     private let processingQueue = DispatchQueue(label: "blur.detection.queue", qos: .userInitiated)
+    
+    // ML Kit detectors
+    private var objectDetector: ObjectDetector?
+    private var textRecognizer: TextRecognizer?
     
     // Text recognition result structure
     private struct TextRecognitionResult {
@@ -75,8 +79,14 @@ class BlurDetectionHelper {
             // Allocate memory for input and output tensors
             try interpreter?.allocateTensors()
             
-            // Initialize text recognition helper
-            textBlurHelper?.initialize()
+            // Initialize ML Kit Object Detector
+            let objectDetectorOptions = ObjectDetectorOptions()
+            objectDetectorOptions.detectorMode = .singleImage
+            objectDetectorOptions.shouldEnableClassification = true
+            objectDetector = ObjectDetector.objectDetector(options: objectDetectorOptions)
+            
+            // Initialize ML Kit Text Recognizer
+            textRecognizer = TextRecognizer.textRecognizer()
             
             isInitialized = true
             return true
@@ -550,19 +560,23 @@ class BlurDetectionHelper {
     
     
     /**
-     * Detect objects in the image using Vision framework
+     * Detect objects in the image using ML Kit Object Detection
      * @param image Input UIImage
      * @return List of detected objects
      */
-    private func detectObjects(image: UIImage) -> [VNDetectedObjectObservation] {
-        guard let cgImage = image.cgImage else { return [] }
+    private func detectObjects(image: UIImage) -> [Object] {
+        guard let objectDetector = objectDetector else { 
+            print("\(Self.TAG): Object detector not initialized")
+            return [] 
+        }
         
-        let requestHandler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        let visionImage = VisionImage(image: image)
+        visionImage.orientation = image.imageOrientation
         
-        var detectedObjects: [VNDetectedObjectObservation] = []
+        var detectedObjects: [Object] = []
         let semaphore = DispatchSemaphore(value: 0)
         
-        let request = VNDetectRectanglesRequest { (request, error) in
+        objectDetector.process(visionImage) { objects, error in
             defer { semaphore.signal() }
             
             if let error = error {
@@ -570,29 +584,18 @@ class BlurDetectionHelper {
                 return
             }
             
-            guard let observations = request.results as? [VNDetectedObjectObservation] else {
+            guard let objects = objects, !objects.isEmpty else {
+                print("\(Self.TAG): No objects detected")
                 return
             }
             
-            detectedObjects = observations
+            detectedObjects = objects
+            print("\(Self.TAG): Detected \(objects.count) objects")
         }
         
-        // Configure for better detection
-        request.maximumObservations = 10
-        request.minimumAspectRatio = 0.1
-        request.maximumAspectRatio = 10.0
-        request.minimumSize = 0.01
-        request.minimumConfidence = 0.3
-        
-        do {
-            try requestHandler.perform([request])
-            
-            let timeout = DispatchTime.now() + Self.TIMEOUT_MS
-            if semaphore.wait(timeout: timeout) == .timedOut {
-                print("\(Self.TAG): Object detection timed out")
-            }
-        } catch {
-            print("\(Self.TAG): Object detection error: \(error.localizedDescription)")
+        let timeout = DispatchTime.now() + Self.TIMEOUT_MS
+        if semaphore.wait(timeout: timeout) == .timedOut {
+            print("\(Self.TAG): Object detection timed out")
         }
         
         return detectedObjects
@@ -750,6 +753,8 @@ class BlurDetectionHelper {
      */
     func close() {
         interpreter = nil
+        objectDetector = nil
+        textRecognizer = nil
         isInitialized = false
     }
     
@@ -790,11 +795,13 @@ class BlurDetectionHelper {
      * @return TextRecognitionResult with bounding boxes
      */
     private func detectTextWithBoundingBoxes(image: UIImage) -> TextRecognitionResult {
-        guard let cgImage = image.cgImage else {
+        guard let textRecognizer = textRecognizer else {
+            print("\(Self.TAG): Text recognizer not initialized")
             return TextRecognitionResult(isReadable: false, averageConfidence: 0.0, totalWords: 0, readableWords: 0, boundingBoxes: [])
         }
         
-        let requestHandler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        let visionImage = VisionImage(image: image)
+        visionImage.orientation = image.imageOrientation
         
         var recognitionResult: TextRecognitionResult?
         var recognitionError: Error?
@@ -802,7 +809,7 @@ class BlurDetectionHelper {
         // Use semaphore for synchronous execution
         let semaphore = DispatchSemaphore(value: 0)
         
-        let request = VNRecognizeTextRequest { [weak self] (request, error) in
+        textRecognizer.process(visionImage) { [weak self] text, error in
             defer { semaphore.signal() }
             
             if let error = error {
@@ -810,29 +817,18 @@ class BlurDetectionHelper {
                 return
             }
             
-            guard let observations = request.results as? [VNRecognizedTextObservation] else {
+            guard let text = text else {
                 recognitionResult = TextRecognitionResult(isReadable: false, averageConfidence: 0.0, totalWords: 0, readableWords: 0, boundingBoxes: [])
                 return
             }
             
-            recognitionResult = self?.analyzeTextConfidence(observations: observations)
+            recognitionResult = self?.analyzeMLKitTextConfidence(text: text)
         }
         
-        // Configure text recognition for better accuracy
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = true
-        
-        // Perform text recognition
-        do {
-            try requestHandler.perform([request])
-            
-            // Wait for completion with timeout
-            let timeout = DispatchTime.now() + Self.TIMEOUT_MS
-            if semaphore.wait(timeout: timeout) == .timedOut {
-                recognitionError = NSError(domain: "TextRecognitionError", code: 2, userInfo: [NSLocalizedDescriptionKey: "Text recognition timed out"])
-            }
-        } catch {
-            recognitionError = error
+        // Wait for completion with timeout
+        let timeout = DispatchTime.now() + Self.TIMEOUT_MS
+        if semaphore.wait(timeout: timeout) == .timedOut {
+            recognitionError = NSError(domain: "TextRecognitionError", code: 2, userInfo: [NSLocalizedDescriptionKey: "Text recognition timed out"])
         }
         
         if let error = recognitionError {
@@ -844,7 +840,7 @@ class BlurDetectionHelper {
     }
     
     /**
-     * Analyze text confidence and extract bounding boxes
+     * Analyze text confidence and extract bounding boxes (Legacy Vision framework method)
      * @param observations Recognized text observations from Vision framework
      * @return TextRecognitionResult with analysis
      */
@@ -894,6 +890,75 @@ class BlurDetectionHelper {
                         if !useDictionaryCheck || isInDictionary(word: trimmedWord) {
                             readableWords += 1
                             readableText += trimmedWord + " "
+                        }
+                    }
+                }
+            }
+        }
+        
+        let averageConfidence = totalWords > 0 ? totalConfidence / Double(totalWords) : 0.0
+        
+        // Image is readable if:
+        // 1. We have text AND
+        // 2. At least 60% of words are readable OR average confidence is high
+        let isReadable = totalWords > 0 &&
+                        (readableWords >= max(1, Int(Double(totalWords) * Self.AT_LEAST_N_PERCENT_OF_WORDS_ARE_READABLE)) ||
+                         averageConfidence >= Self.AT_LEAST_N_PERCENT_OF_AVERAGE_CONFIDENCE)
+        
+        return TextRecognitionResult(isReadable: isReadable, averageConfidence: averageConfidence, totalWords: totalWords, readableWords: readableWords, boundingBoxes: boundingBoxes)
+    }
+    
+    /**
+     * Analyze text confidence and extract bounding boxes from ML Kit Text result
+     * @param text ML Kit Text result
+     * @return TextRecognitionResult with analysis
+     */
+    private func analyzeMLKitTextConfidence(text: Text) -> TextRecognitionResult {
+        var totalWords = 0
+        var readableWords = 0
+        var totalConfidence = 0.0
+        var allText = ""
+        var readableText = ""
+        var boundingBoxes: [[Double]] = []
+        
+        for block in text.blocks {
+            for line in block.lines {
+                for element in line.elements {
+                    let elementText = element.text
+                    let mlkitConfidence = element.confidence ?? 0.5 // Default if confidence not available
+                    
+                    allText += elementText + " "
+                    
+                    // Extract bounding box coordinates from element
+                    if let frame = element.frame {
+                        let box: [Double] = [
+                            Double(frame.minX),  // left
+                            Double(frame.minY),  // top  
+                            Double(frame.maxX),  // right
+                            Double(frame.maxY)   // bottom
+                        ]
+                        boundingBoxes.append(box)
+                    }
+                    
+                    // Split text into words for individual analysis
+                    let words = elementText.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
+                    
+                    for word in words {
+                        let trimmedWord = word.trimmingCharacters(in: .punctuationCharacters)
+                        if !trimmedWord.isEmpty {
+                            totalWords += 1
+                            
+                            // Estimate word confidence based on ML Kit confidence and text characteristics
+                            let wordConfidence = estimateWordConfidence(word: trimmedWord, visionConfidence: Double(mlkitConfidence))
+                            totalConfidence += wordConfidence
+                            
+                            if wordConfidence >= Self.MIN_WORD_CONFIDENCE {
+                                // Optional dictionary check for enhanced validation
+                                if !useDictionaryCheck || isInDictionary(word: trimmedWord) {
+                                    readableWords += 1
+                                    readableText += trimmedWord + " "
+                                }
+                            }
                         }
                     }
                 }
