@@ -1,7 +1,9 @@
 import Foundation
 import UIKit
 import TensorFlowLite
-import MLKit
+import MLKitObjectDetection
+import MLKitTextRecognition
+import MLKitVision
 
 /**
  * Comprehensive Blur Detection Helper for iOS
