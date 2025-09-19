@@ -23,11 +23,26 @@ export interface CameraPreviewPlugin {
   /**
   * take a snapshot as base64.
   */
-  takeSnapshot(options:{quality?:number, checkBlur?:boolean}): Promise<{base64:string, confidence?: number, boundingBoxes?: number[][]}>;
+  takeSnapshot(options:{quality?:number, checkBlur?:boolean}): Promise<{
+    base64: string, 
+    confidence?: number, 
+    boundingBoxes?: number[][],
+    isBlur?: boolean,
+    detectionMethod?: string
+  }>;
   /**
   * analyze an image for blur detection with detailed confidence scores.
   */
-  detectBlur(options:{image: string}): Promise<{isBlur: boolean, blurConfidence: number, sharpConfidence: number}>;
+  detectBlur(options:{image: string}): Promise<{
+    isBlur: boolean, 
+    blurConfidence: number, 
+    sharpConfidence: number,
+    method?: string,
+    boundingBoxes?: number[][],
+    objectCount?: number,
+    wordCount?: number,
+    readableWords?: number
+  }>;
   /**
   * save a frame internally. Android and iOS only.
   */

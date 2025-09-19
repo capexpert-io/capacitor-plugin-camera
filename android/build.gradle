@@ -76,6 +76,7 @@ dependencies {
     implementation 'org.tensorflow:tensorflow-lite-support:0.4.4'
     implementation 'org.tensorflow:tensorflow-lite-gpu:2.14.0'
     
-    // Google ML Kit dependencies for text recognition
+    // Google ML Kit dependencies for text recognition and object detection
     implementation 'com.google.mlkit:text-recognition:16.0.1'
+    implementation 'com.google.mlkit:object-detection:17.0.1'
 }

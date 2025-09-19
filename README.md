@@ -290,7 +290,7 @@ stopCamera() => Promise<void>
 ### takeSnapshot(...)
 
 ```typescript
-takeSnapshot(options: { quality?: number; checkBlur?: boolean; }) => Promise<{ base64: string; confidence?: number; boundingBoxes?: number[][]; }>
+takeSnapshot(options: { quality?: number; checkBlur?: boolean; }) => Promise<{ base64: string; confidence?: number; boundingBoxes?: number[][]; isBlur?: boolean; detectionMethod?: string; }>
 ```
 
 take a snapshot as base64.
@@ -299,7 +299,7 @@ take a snapshot as base64.
 | ------------- | ------------------------------------------------------- |
 | **`options`** | <code>{ quality?: number; checkBlur?: boolean; }</code> |
 
-**Returns:** <code>Promise&lt;{ base64: string; confidence?: number; boundingBoxes?: number[][]; }&gt;</code>
+**Returns:** <code>Promise&lt;{ base64: string; confidence?: number; boundingBoxes?: number[][]; isBlur?: boolean; detectionMethod?: string; }&gt;</code>
 
 --------------------
 
@@ -307,7 +307,7 @@ take a snapshot as base64.
 ### detectBlur(...)
 
 ```typescript
-detectBlur(options: { image: string; }) => Promise<{ isBlur: boolean; blurConfidence: number; sharpConfidence: number; }>
+detectBlur(options: { image: string; }) => Promise<{ isBlur: boolean; blurConfidence: number; sharpConfidence: number; method?: string; boundingBoxes?: number[][]; objectCount?: number; wordCount?: number; readableWords?: number; }>
 ```
 
 analyze an image for blur detection with detailed confidence scores.
@@ -316,7 +316,7 @@ analyze an image for blur detection with detailed confidence scores.
 | ------------- | ------------------------------- |
 | **`options`** | <code>{ image: string; }</code> |
 
-**Returns:** <code>Promise&lt;{ isBlur: boolean; blurConfidence: number; sharpConfidence: number; }&gt;</code>
+**Returns:** <code>Promise&lt;{ isBlur: boolean; blurConfidence: number; sharpConfidence: number; method?: string; boundingBoxes?: number[][]; objectCount?: number; wordCount?: number; readableWords?: number; }&gt;</code>
 
 --------------------
 
