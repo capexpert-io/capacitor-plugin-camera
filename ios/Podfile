@@ -1,4 +1,4 @@
-platform :ios, '14.0'
+platform :ios, '16.0'
 
 def capacitor_pods
   pod 'Capacitor', :path => '../node_modules/@capacitor/ios'
@@ -9,14 +9,14 @@ target 'Plugin' do
   capacitor_pods
   use_frameworks!
   pod 'TensorFlowLiteSwift'
-  pod 'GoogleMLKit/ObjectDetection', '8.0.0'
-  pod 'GoogleMLKit/TextRecognition', '8.0.0'
+  pod 'MLKitObjectDetection'
+  pod 'MLKitTextRecognition', '7.0.0'
 end
 
 target 'PluginTests' do
   capacitor_pods
   use_frameworks!
   pod 'TensorFlowLiteSwift'
-  pod 'GoogleMLKit/ObjectDetection', '8.0.0'
-  pod 'GoogleMLKit/TextRecognition', '8.0.0'
+  pod 'MLKitObjectDetection'
+  pod 'MLKitTextRecognition', '7.0.0'
 end

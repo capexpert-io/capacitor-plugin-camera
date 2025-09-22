@@ -12,8 +12,8 @@ import MLKitVision
 class BlurDetectionHelper {
     
     private static let TAG = "BlurDetectionHelper"
-    private static let INPUT_WIDTH = 600 // Model's expected input width
-    private static let INPUT_HEIGHT = 600 // Model's expected input height
+    private static let INPUT_WIDTH = 224 // Model's expected input width
+    private static let INPUT_HEIGHT = 224 // Model's expected input height
     private static let BATCH_SIZE = 1 // Model expects a batch size of 1
     private static let NUM_CHANNELS = 3 // RGB
     private static let NUM_CLASSES = 2 // blur, sharp
@@ -87,14 +87,16 @@ class BlurDetectionHelper {
             objectDetectorOptions.shouldEnableClassification = true
             objectDetector = ObjectDetector.objectDetector(options: objectDetectorOptions)
             
-            // Initialize ML Kit Text Recognizer
-            textRecognizer = TextRecognizer.textRecognizer()
+            // Initialize ML Kit Text Recognizer (updated API)
+            let textOptions = TextRecognizerOptions()
+            textRecognizer = TextRecognizer.textRecognizer(options: textOptions)
             
             isInitialized = true
             return true
             
         } catch {
             isInitialized = false
+            logError(error, context: "initialize()")
             return false
         }
     }
@@ -125,97 +127,112 @@ class BlurDetectionHelper {
             return result
         }
         
-        do {
-            // Step 1: Object Detection (Preferred Path)
-            if useObjectDetection {
-                print("\(Self.TAG): Step 1: Trying Object Detection")
-                let objects = detectObjects(image: image)
+        // Step 1: Object Detection (Preferred Path)
+        if useObjectDetection {
+            print("\(Self.TAG): Step 1: Trying Object Detection")
+            let objects = detectObjects(image: image)
+            
+            if !objects.isEmpty {
+                print("\(Self.TAG): Objects detected: \(objects.count)")
                 
-                if !objects.isEmpty {
-                    print("\(Self.TAG): Objects detected: \(objects.count)")
+                // Process ROIs from detected objects
+                var roiResults: [[String: Any]] = []
+                var boundingBoxes: [[Double]] = []
+                var anyBlurry = false
+                
+                for object in objects {
+                    let boundingBox = object.frame
+                    // Always record the detected bounding box for JS consumers
+                    boundingBoxes.append([
+                        Double(boundingBox.minX),
+                        Double(boundingBox.minY),
+                        Double(boundingBox.maxX),
+                        Double(boundingBox.maxY)
+                    ])
+
+
+                    print("\(Self.TAG): Object Detection Result isBlur: \(boundingBox.minX), \(boundingBox.minY), \(boundingBox.maxX), \(boundingBox.maxY)")
                     
-                    // Process ROIs from detected objects
-                    var roiResults: [[String: Any]] = []
+                    // Crop ROI from original image
+                    if let roi = cropImage(image: image, rect: boundingBox) {
+                        // Run TFLite blur detection on ROI
+                        var roiResult = detectBlurWithTFLiteConfidence(image: roi)
+                        
+                        print("\(Self.TAG): Object Detection ROI Result isBlur: \(roiResult["isBlur"] ?? false)")
+                        roiResult["boundingBox"] = [
+                            boundingBox.minX,
+                            boundingBox.minY,
+                            boundingBox.maxX,
+                            boundingBox.maxY
+                        ]
+                        roiResults.append(roiResult)
+                        
+                        let isBlur = roiResult["isBlur"] as? Bool ?? false
+                        if isBlur {
+                            anyBlurry = true
+                        }
+                    }
+                }
+                
+                result["method"] = "object_detection"
+                result["isBlur"] = anyBlurry
+                result["roiResults"] = roiResults
+                result["objectCount"] = objects.count
+                result["boundingBoxes"] = boundingBoxes
+                return result
+            }
+        }
+        
+        // Step 2: Text Detection (Fallback if Object Not Found)
+        if useTextRecognition {
+            print("\(Self.TAG): Step 2: Trying Text Detection")
+            let textResult = detectTextWithBoundingBoxes(image: image)
+            
+            if textResult.totalWords > 0 {
+                print("\(Self.TAG): Text detected: \(textResult.totalWords) words")
+                
+                // Get top 3 largest text areas combined into a single bounding box
+                let topTextAreas = getTopTextAreas(boundingBoxes: textResult.boundingBoxes, topN: 3)
+                
+                if !topTextAreas.isEmpty {
+                    // Process ROIs from text areas
+                    let roiResults = processROIsInParallel(image: image, rois: topTextAreas)
+                    
+                    // Collect top-level bounding boxes for JS consumers
+                    let boundingBoxes: [[Double]] = topTextAreas.map { roi in
+                        [
+                            Double(roi.minX),
+                            Double(roi.minY),
+                            Double(roi.maxX),
+                            Double(roi.maxY)
+                        ]
+                    }
+                    
+                    // Check if any ROI is blurry
                     var anyBlurry = false
-                    
-                    for object in objects {
-                        let boundingBox = object.boundingBox
-                        // Crop ROI from original image
-                        if let roi = cropImage(image: image, rect: boundingBox) {
-                            // Run TFLite blur detection on ROI
-                            var roiResult = detectBlurWithTFLiteConfidence(image: roi)
-                            
-                            print("\(Self.TAG): Object Detection ROI Result isBlur: \(roiResult["isBlur"] ?? false)")
-                            roiResult["boundingBox"] = [
-                                boundingBox.minX,
-                                boundingBox.minY,
-                                boundingBox.maxX,
-                                boundingBox.maxY
-                            ]
-                            roiResults.append(roiResult)
-                            
-                            let isBlur = roiResult["isBlur"] as? Bool ?? false
-                            if isBlur {
-                                anyBlurry = true
-                            }
+                    for roiResult in roiResults {
+                        let isBlur = roiResult["isBlur"] as? Bool ?? false
+                        if isBlur {
+                            anyBlurry = true
+                            break
                         }
                     }
                     
-                    result["method"] = "object_detection"
+                    result["method"] = "text_detection"
                     result["isBlur"] = anyBlurry
                     result["roiResults"] = roiResults
-                    result["objectCount"] = objects.count
+                    result["textConfidence"] = textResult.averageConfidence
+                    result["wordCount"] = textResult.totalWords
+                    result["readableWords"] = textResult.readableWords
+                    result["boundingBoxes"] = boundingBoxes
                     return result
                 }
             }
-            
-            // Step 2: Text Detection (Fallback if Object Not Found)
-            if useTextRecognition {
-                print("\(Self.TAG): Step 2: Trying Text Detection")
-                let textResult = detectTextWithBoundingBoxes(image: image)
-                
-                if textResult.totalWords > 0 {
-                    print("\(Self.TAG): Text detected: \(textResult.totalWords) words")
-                    
-                    // Get top 3 largest text areas combined into a single bounding box
-                    let topTextAreas = getTopTextAreas(boundingBoxes: textResult.boundingBoxes, topN: 3)
-                    
-                    if !topTextAreas.isEmpty {
-                        // Process ROIs from text areas
-                        let roiResults = processROIsInParallel(image: image, rois: topTextAreas)
-                        
-                        // Check if any ROI is blurry
-                        var anyBlurry = false
-                        for roiResult in roiResults {
-                            let isBlur = roiResult["isBlur"] as? Bool ?? false
-                            if isBlur {
-                                anyBlurry = true
-                                break
-                            }
-                        }
-                        
-                        result["method"] = "text_detection"
-                        result["isBlur"] = anyBlurry
-                        result["roiResults"] = roiResults
-                        result["textConfidence"] = textResult.averageConfidence
-                        result["wordCount"] = textResult.totalWords
-                        result["readableWords"] = textResult.readableWords
-                        return result
-                    }
-                }
-            }
-            
-            // Step 3: Full-Image Blur Detection (Final Fallback)
-            print("\(Self.TAG): Step 3: Using Full-Image Blur Detection")
-            return detectBlurWithTFLiteConfidence(image: image)
-            
-        } catch {
-            print("\(Self.TAG): Error in blur detection pipeline: \(error.localizedDescription)")
-            result["isBlur"] = false
-            result["method"] = "error"
-            result["error"] = error.localizedDescription
-            return result
         }
+        
+        // Step 3: Full-Image Blur Detection (Final Fallback)
+        print("\(Self.TAG): Step 3: Using Full-Image Blur Detection")
+        return detectBlurWithTFLiteConfidence(image: image)
     }
     
     /**
@@ -255,17 +272,17 @@ class BlurDetectionHelper {
             }
             
             // probabilities[0] = blur probability, probabilities[1] = sharp probability
-            let blurConfidence = probabilities.count > 0 ? Double(probabilities[0]) : 0.0
             let sharpConfidence = probabilities.count > 1 ? Double(probabilities[1]) : 0.0
             
             // Determine if image is blurry using TFLite confidence
-            let isBlur = sharpConfidence < 0.80
+            let isBlur = sharpConfidence < 0.75
 
             
             // Return 1.0 for blur, 0.0 for sharp (to maintain double return type)
             return isBlur ? 1.0 : 0.0
             
         } catch {
+            logError(error, context: "detectBlurWithTFLite(image:)")
             // Fallback to Laplacian algorithm
             let laplacianScore = calculateLaplacianBlurScore(image: image)
             let isBlur = laplacianScore < 150
@@ -277,8 +294,24 @@ class BlurDetectionHelper {
      * Preprocess image for MobileNetV2 input (224x224 RGB, normalized)
      */
     private func preprocessImage(_ image: UIImage) -> Data? {
+        // Determine model input shape dynamically from the interpreter if available
+        var modelWidth = Self.INPUT_WIDTH
+        var modelHeight = Self.INPUT_HEIGHT
+        var modelChannels = Self.NUM_CHANNELS
+        var isQuantizedInput = false
+        if let interpreter = interpreter, let inputTensor = try? interpreter.input(at: 0) {
+            let dims = inputTensor.shape.dimensions
+            if dims.count == 4 {
+                // NHWC
+                modelHeight = dims[1]
+                modelWidth = dims[2]
+                modelChannels = dims[3]
+            }
+            isQuantizedInput = (inputTensor.dataType == .uInt8)
+        }
+        
         // Resize image to model's expected dimensions
-        guard let resizedImage = resizeImage(image, to: CGSize(width: Self.INPUT_WIDTH, height: Self.INPUT_HEIGHT)) else {
+        guard let resizedImage = resizeImage(image, to: CGSize(width: modelWidth, height: modelHeight)) else {
             return nil
         }
         
@@ -305,25 +338,50 @@ class BlurDetectionHelper {
         
         context?.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
         
-        // Convert to float array and normalize to [0, 1]
-        var normalizedPixels = [Float32]()
-        let totalPixels = Self.BATCH_SIZE * width * height * Self.NUM_CHANNELS
-        normalizedPixels.reserveCapacity(totalPixels)
-        
-        // Add batch dimension by repeating the image data BATCH_SIZE times
-        for _ in 0..<Self.BATCH_SIZE {
-            for i in stride(from: 0, to: pixelData.count, by: bytesPerPixel) {
-                let r = Float32(pixelData[i]) / 255.0
-                let g = Float32(pixelData[i + 1]) / 255.0
-                let b = Float32(pixelData[i + 2]) / 255.0
-                normalizedPixels.append(r)
-                normalizedPixels.append(g)
-                normalizedPixels.append(b)
+        // Prepare output buffer based on expected tensor type and channels (NHWC)
+        if isQuantizedInput {
+            var quantizedPixels = [UInt8]()
+            quantizedPixels.reserveCapacity(Self.BATCH_SIZE * width * height * modelChannels)
+            
+            for _ in 0..<Self.BATCH_SIZE {
+                for i in stride(from: 0, to: pixelData.count, by: bytesPerPixel) {
+                    let r = pixelData[i]
+                    let g = pixelData[i + 1]
+                    let b = pixelData[i + 2]
+                    if modelChannels == 1 {
+                        // Luma approximation
+                        let gray = UInt8(min(255, Int(0.299 * Double(r) + 0.587 * Double(g) + 0.114 * Double(b))))
+                        quantizedPixels.append(gray)
+                    } else {
+                        // Assume RGB ordering
+                        quantizedPixels.append(r)
+                        quantizedPixels.append(g)
+                        quantizedPixels.append(b)
+                    }
+                }
             }
-        }
-        
-        return normalizedPixels.withUnsafeBufferPointer { buffer in
-            return Data(buffer: buffer)
+            return quantizedPixels.withUnsafeBufferPointer { Data(buffer: $0) }
+        } else {
+            // Float32 normalized to [0,1]
+            var normalizedPixels = [Float32]()
+            normalizedPixels.reserveCapacity(Self.BATCH_SIZE * width * height * modelChannels)
+            
+            for _ in 0..<Self.BATCH_SIZE {
+                for i in stride(from: 0, to: pixelData.count, by: bytesPerPixel) {
+                    let r = Float32(pixelData[i]) / 255.0
+                    let g = Float32(pixelData[i + 1]) / 255.0
+                    let b = Float32(pixelData[i + 2]) / 255.0
+                    if modelChannels == 1 {
+                        let gray = 0.299 * r + 0.587 * g + 0.114 * b
+                        normalizedPixels.append(gray)
+                    } else {
+                        normalizedPixels.append(r)
+                        normalizedPixels.append(g)
+                        normalizedPixels.append(b)
+                    }
+                }
+            }
+            return normalizedPixels.withUnsafeBufferPointer { Data(buffer: $0) }
         }
     }
     
@@ -432,6 +490,8 @@ class BlurDetectionHelper {
             let normalizedScore = max(0.0, min(1.0, laplacianScore / 300.0))
             let sharpConfidence = normalizedScore
             let blurConfidence = 1.0 - normalizedScore
+
+            print(" TFLite Blur Detection Result: laplacianScore \(blurConfidence), \(sharpConfidence)")
             
             return [
                 "method": "laplacian",
@@ -453,6 +513,8 @@ class BlurDetectionHelper {
                 let sharpConfidence = normalizedScore
                 let blurConfidence = 1.0 - normalizedScore
                 
+                print(" TFLite Blur Detection Result: laplacianScore2 \(blurConfidence), \(sharpConfidence)")
+
                 return [
                     "method": "laplacian",
                     "isBlur": isBlur,
@@ -483,8 +545,9 @@ class BlurDetectionHelper {
             let sharpConfidence = probabilities.count > 1 ? Double(probabilities[1]) : 0.0
             
             // Determine if image is blurry using TFLite confidence
-            let isBlur = sharpConfidence < 0.80
+            let isBlur = sharpConfidence < 0.75
 
+            print(" TFLite Blur Detection Result: \(blurConfidence), \(sharpConfidence)")
             
             return [
                 "method": "tflite",
@@ -496,6 +559,7 @@ class BlurDetectionHelper {
             ]
             
         } catch {
+            logError(error, context: "detectBlurWithTFLiteConfidence(image:)")
             // Fallback to Laplacian algorithm
             let laplacianScore = calculateLaplacianBlurScore(image: image)
             let isBlur = laplacianScore < 150
@@ -503,6 +567,8 @@ class BlurDetectionHelper {
             let sharpConfidence = normalizedScore
             let blurConfidence = 1.0 - normalizedScore
             
+            print(" TFLite Blur Detection Result: laplacianScore3 \(blurConfidence), \(sharpConfidence)")
+
             return [
                 "method": "laplacian",
                 "isBlur": isBlur,
@@ -542,14 +608,6 @@ class BlurDetectionHelper {
      */
     func setTextRecognitionEnabled(_ enable: Bool) {
         useTextRecognition = enable
-    }
-    
-    /**
-     * Enable or disable dictionary check in text recognition
-     * @param enable true to enable dictionary check
-     */
-    func setDictionaryCheckEnabled(_ enable: Bool) {
-        textBlurHelper?.setDictionaryCheckEnabled(enable)
     }
     
     /**
@@ -704,14 +762,20 @@ class BlurDetectionHelper {
     private func cropImage(image: UIImage, rect: CGRect) -> UIImage? {
         guard let cgImage = image.cgImage else { return nil }
         
-        // Convert normalized coordinates to pixel coordinates
+        // Support both normalized (0-1) and pixel-based rectangles
         let imageSize = CGSize(width: cgImage.width, height: cgImage.height)
-        let cropRect = CGRect(
-            x: rect.minX * imageSize.width,
-            y: rect.minY * imageSize.height,
-            width: rect.width * imageSize.width,
-            height: rect.height * imageSize.height
-        )
+        let isNormalized = rect.maxX <= 1.0 && rect.maxY <= 1.0 && rect.width <= 1.0 && rect.height <= 1.0 && rect.minX >= 0.0 && rect.minY >= 0.0
+        let cropRect: CGRect
+        if isNormalized {
+            cropRect = CGRect(
+                x: rect.minX * imageSize.width,
+                y: rect.minY * imageSize.height,
+                width: rect.width * imageSize.width,
+                height: rect.height * imageSize.height
+            )
+        } else {
+            cropRect = rect
+        }
         
         // Ensure bounds are within image
         let clampedRect = CGRect(
@@ -776,22 +840,6 @@ class BlurDetectionHelper {
     }
     
     /**
-     * Enable or disable text recognition
-     * @param enable true to enable text recognition
-     */
-    func setTextRecognitionEnabled(_ enable: Bool) {
-        useTextRecognition = enable
-    }
-    
-    /**
-     * Enable or disable dictionary check in text recognition
-     * @param enable true to enable dictionary check
-     */
-    func setDictionaryCheckEnabled(_ enable: Bool) {
-        useDictionaryCheck = enable
-    }
-    
-    /**
      * Detect text in image with bounding boxes
      * @param image Input UIImage
      * @return TextRecognitionResult with bounding boxes
@@ -842,75 +890,6 @@ class BlurDetectionHelper {
     }
     
     /**
-     * Analyze text confidence and extract bounding boxes (Legacy Vision framework method)
-     * @param observations Recognized text observations from Vision framework
-     * @return TextRecognitionResult with analysis
-     */
-    private func analyzeTextConfidence(observations: [VNRecognizedTextObservation]) -> TextRecognitionResult {
-        var totalWords = 0
-        var readableWords = 0
-        var totalConfidence = 0.0
-        var allText = ""
-        var readableText = ""
-        var boundingBoxes: [[Double]] = []
-        
-        for observation in observations {
-            // Get the top candidate for each observation
-            guard let topCandidate = observation.topCandidates(1).first else { 
-                print("\(Self.TAG): No top candidate found for observation")
-                continue 
-            }
-            
-            let text = topCandidate.string
-            let visionConfidence = Double(topCandidate.confidence)
-            
-            allText += text + " "
-            // Extract bounding box coordinates from observation
-            let boundingBox = observation.boundingBox
-            let box: [Double] = [
-                Double(boundingBox.minX),  // top x
-                Double(boundingBox.minY),  // top y
-                Double(boundingBox.maxX),  // bottom x
-                Double(boundingBox.maxY)   // bottom y
-            ]
-            boundingBoxes.append(box)
-            
-            // Split text into words for individual analysis
-            let words = text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
-            
-            for word in words {
-                let trimmedWord = word.trimmingCharacters(in: .punctuationCharacters)
-                if !trimmedWord.isEmpty {
-                    totalWords += 1
-                    
-                    // Estimate word confidence based on Vision confidence and text characteristics
-                    let wordConfidence = estimateWordConfidence(word: trimmedWord, visionConfidence: visionConfidence)
-                    totalConfidence += wordConfidence
-                    
-                    if wordConfidence >= Self.MIN_WORD_CONFIDENCE {
-                        // Optional dictionary check for enhanced validation
-                        if !useDictionaryCheck || isInDictionary(word: trimmedWord) {
-                            readableWords += 1
-                            readableText += trimmedWord + " "
-                        }
-                    }
-                }
-            }
-        }
-        
-        let averageConfidence = totalWords > 0 ? totalConfidence / Double(totalWords) : 0.0
-        
-        // Image is readable if:
-        // 1. We have text AND
-        // 2. At least 60% of words are readable OR average confidence is high
-        let isReadable = totalWords > 0 &&
-                        (readableWords >= max(1, Int(Double(totalWords) * Self.AT_LEAST_N_PERCENT_OF_WORDS_ARE_READABLE)) ||
-                         averageConfidence >= Self.AT_LEAST_N_PERCENT_OF_AVERAGE_CONFIDENCE)
-        
-        return TextRecognitionResult(isReadable: isReadable, averageConfidence: averageConfidence, totalWords: totalWords, readableWords: readableWords, boundingBoxes: boundingBoxes)
-    }
-    
-    /**
      * Analyze text confidence and extract bounding boxes from ML Kit Text result
      * @param text ML Kit Text result
      * @return TextRecognitionResult with analysis
@@ -927,20 +906,19 @@ class BlurDetectionHelper {
             for line in block.lines {
                 for element in line.elements {
                     let elementText = element.text
-                    let mlkitConfidence = element.confidence ?? 0.5 // Default if confidence not available
+                    let mlkitConfidence = 0.5
                     
                     allText += elementText + " "
                     
                     // Extract bounding box coordinates from element
-                    if let frame = element.frame {
-                        let box: [Double] = [
-                            Double(frame.minX),  // left
-                            Double(frame.minY),  // top  
-                            Double(frame.maxX),  // right
-                            Double(frame.maxY)   // bottom
-                        ]
-                        boundingBoxes.append(box)
-                    }
+                    let frame = element.frame
+                    let box: [Double] = [
+                        Double(frame.minX),  // left
+                        Double(frame.minY),  // top  
+                        Double(frame.maxX),  // right
+                        Double(frame.maxY)   // bottom
+                    ]
+                    boundingBoxes.append(box)
                     
                     // Split text into words for individual analysis
                     let words = elementText.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
@@ -1033,5 +1011,11 @@ class BlurDetectionHelper {
         
         let cleanWord = word.lowercased().replacingOccurrences(of: "[^a-zA-Z]", with: "", options: .regularExpression)
         return commonWords.contains(cleanWord)
+    }
+    
+    // MARK: - Error Logging
+    private func logError(_ error: Error, context: String) {
+        let stackTrace = Thread.callStackSymbols.joined(separator: "\n")
+        print("\(Self.TAG): ERROR [\(context)] => \(error.localizedDescription)\nStack Trace:\n\(stackTrace)")
     }
 } 

@@ -79,7 +79,9 @@ public class CameraPreviewPlugin: CAPPlugin, AVCaptureVideoDataOutputSampleBuffe
             
             // Initialize TFLite blur detection helper
             self.blurDetectionHelper = BlurDetectionHelper()
-            let tfliteInitialized = self.blurDetectionHelper?.initialize() ?? false
+            if let initialized = self.blurDetectionHelper?.initialize(), !initialized {
+                print("CameraPreviewPlugin: BlurDetectionHelper failed to initialize; falling back when needed")
+            }
             // Only initialize capture session if permission is granted
             if authStatus == .authorized {
                 self.initializeCaptureSession(enableVideoRecording: false)
@@ -523,21 +525,19 @@ public class CameraPreviewPlugin: CAPPlugin, AVCaptureVideoDataOutputSampleBuffe
                         let confidence = calculateBlurConfidence(from: blurResult)
                         ret["confidence"] = confidence
                         
-                        // Handle bounding boxes - extract coordinate arrays from roiResults
+                        // Handle bounding boxes - prefer roiResults when available; otherwise fallback to top-level boundingBoxes
+                        var combinedBoxes: [[Double]] = []
                         if let roiResults = blurResult["roiResults"] as? [[String: Any]] {
-                            var boundingBoxes: [[Double]] = []
-                            
                             for roi in roiResults {
                                 if let boundingBox = roi["boundingBox"] as? [Double], boundingBox.count >= 4 {
-                                    boundingBoxes.append(boundingBox)
+                                    combinedBoxes.append(boundingBox)
                                 }
                             }
-                            ret["boundingBoxes"] = boundingBoxes
-                        } else if let boundingBoxes = blurResult["boundingBoxes"] as? [[Double]] {
-                            ret["boundingBoxes"] = boundingBoxes
-                        } else {
-                            ret["boundingBoxes"] = [[Double]]()
                         }
+                        if combinedBoxes.isEmpty, let topLevelBoxes = blurResult["boundingBoxes"] as? [[Double]] {
+                            combinedBoxes = topLevelBoxes
+                        }
+                        ret["boundingBoxes"] = combinedBoxes
                     } else {
                         // Fallback to Laplacian algorithm
                         let confidence = calculateBlurConfidence(image: normalized)
@@ -1459,11 +1459,6 @@ public class CameraPreviewPlugin: CAPPlugin, AVCaptureVideoDataOutputSampleBuffe
             } else {
                 return isBlur ? 0.0 : 1.0
             }
-            
-        case "error":
-            // If there was an error, fall back to Laplacian
-            // This will be handled by the calling method
-            
         default:
             break
         }
