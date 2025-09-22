@@ -25,6 +25,11 @@ class BlurDetectionHelper {
     private static let MIN_WORD_CONFIDENCE: Double = 0.8 // 80% confidence threshold
     private static let AT_LEAST_N_PERCENT_OF_WORDS_ARE_READABLE: Double = 0.6 // 60% of words are readable
     private static let AT_LEAST_N_PERCENT_OF_AVERAGE_CONFIDENCE: Double = 0.85 // 85% of average confidence
+
+    // Method based confidence threshold
+    private static let MIN_SHARP_CONFIDENCE_FOR_OBJECT_DETECTION: Double = 0.4 // 40% confidence threshold
+    private static let MIN_SHARP_CONFIDENCE_FOR_TEXT_DETECTION: Double = 0.1 // 10% confidence threshold
+    private static let MIN_SHARP_CONFIDENCE_FOR_FULL_IMAGE: Double = 0.7 // 70% confidence threshold
     
     private var interpreter: Interpreter?
     private var isInitialized = false
@@ -156,7 +161,7 @@ class BlurDetectionHelper {
                     // Crop ROI from original image
                     if let roi = cropImage(image: image, rect: boundingBox) {
                         // Run TFLite blur detection on ROI
-                        var roiResult = detectBlurWithTFLiteConfidence(image: roi)
+                        var roiResult = detectBlurWithTFLiteConfidence(image: roi, Self.MIN_SHARP_CONFIDENCE_FOR_OBJECT_DETECTION)
                         
                         print("\(Self.TAG): Object Detection ROI Result isBlur: \(roiResult["isBlur"] ?? false)")
                         roiResult["boundingBox"] = [
@@ -232,7 +237,7 @@ class BlurDetectionHelper {
         
         // Step 3: Full-Image Blur Detection (Final Fallback)
         print("\(Self.TAG): Step 3: Using Full-Image Blur Detection")
-        return detectBlurWithTFLiteConfidence(image: image)
+        return detectBlurWithTFLiteConfidence(image: image, Self.MIN_SHARP_CONFIDENCE_FOR_FULL_IMAGE)
     }
     
     /**
@@ -275,7 +280,7 @@ class BlurDetectionHelper {
             let sharpConfidence = probabilities.count > 1 ? Double(probabilities[1]) : 0.0
             
             // Determine if image is blurry using TFLite confidence
-            let isBlur = sharpConfidence < 0.1
+            let isBlur = sharpConfidence < Self.MIN_SHARP_CONFIDENCE_FOR_FULL_IMAGE
 
             
             // Return 1.0 for blur, 0.0 for sharp (to maintain double return type)
@@ -483,7 +488,7 @@ class BlurDetectionHelper {
      * @param image Input UIImage
      * @return Dictionary with isBlur, blurConfidence, and sharpConfidence
      */
-    func detectBlurWithTFLiteConfidence(image: UIImage) -> [String: Any] {
+    func detectBlurWithTFLiteConfidence(image: UIImage, minSharpConfidence: Double = Self.MIN_SHARP_CONFIDENCE_FOR_FULL_IMAGE) -> [String: Any] {
         guard isInitialized, let interpreter = interpreter else {
             let laplacianScore = calculateLaplacianBlurScore(image: image)
             let isBlur = laplacianScore < 150
@@ -545,7 +550,7 @@ class BlurDetectionHelper {
             let sharpConfidence = probabilities.count > 1 ? Double(probabilities[1]) : 0.0
             
             // Determine if image is blurry using TFLite confidence
-            let isBlur = sharpConfidence < 0.1
+            let isBlur = sharpConfidence < minSharpConfidence
 
             print(" TFLite Blur Detection Result: \(blurConfidence), \(sharpConfidence)")
             
@@ -721,7 +726,7 @@ class BlurDetectionHelper {
                 defer { group.leave() }
                 
                 if let cropped = self.cropImage(image: image, rect: roi) {
-                    var result = self.detectBlurWithTFLiteConfidence(image: cropped)
+                    var result = self.detectBlurWithTFLiteConfidence(image: cropped, Self.MIN_SHARP_CONFIDENCE_FOR_TEXT_DETECTION)
                     result["boundingBox"] = [
                         roi.minX,
                         roi.minY,
