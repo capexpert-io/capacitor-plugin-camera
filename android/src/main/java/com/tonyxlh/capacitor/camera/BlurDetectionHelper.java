@@ -269,8 +269,8 @@ public class BlurDetectionHelper {
                 if (textResult.totalWords > 0) {
                     Log.d(TAG, "Text detected: " + textResult.totalWords + " words");
                     
-                    // Get top 3 largest text areas combined into a single bounding box
-                    List<Rect> topTextAreas = getTopTextAreas(textResult.boundingBoxes, 3);
+                    // Combine all detected text areas into a single bounding box
+                    List<Rect> topTextAreas = combineAllTextAreas(textResult.boundingBoxes);
                     
                     if (!topTextAreas.isEmpty()) {
                         // Process ROIs from text areas
@@ -731,52 +731,38 @@ public class BlurDetectionHelper {
     }
     
     /**
-     * Get the top N largest text areas and combine them into a single bounding box
+     * Combine all detected text areas into a single bounding box
      * @param boundingBoxes List of bounding boxes
-     * @param topN Number of top areas to combine
      * @return List containing a single combined bounding box
      */
-    private List<Rect> getTopTextAreas(List<Rect> boundingBoxes, int topN) {
+    private List<Rect> combineAllTextAreas(List<Rect> boundingBoxes) {
         if (boundingBoxes.isEmpty()) {
             return new ArrayList<>();
         }
         
-        // Sort by area (largest first)
-        List<Rect> sorted = new ArrayList<>(boundingBoxes);
-        sorted.sort((a, b) -> {
-            int areaA = a.width() * a.height();
-            int areaB = b.width() * b.height();
-            return Integer.compare(areaB, areaA); // Descending order
-        });
-        
-        // Get top N areas
-        List<Rect> topAreas = sorted.subList(0, Math.min(topN, sorted.size()));
-        
-        // Combine all top areas into a single bounding box
-        if (topAreas.isEmpty()) {
-            return new ArrayList<>();
-        }
-        
-        // Find the minimum and maximum coordinates to create a combined bounding box
+        // Find the minimum and maximum coordinates across all boxes
         int minLeft = Integer.MAX_VALUE;
         int minTop = Integer.MAX_VALUE;
         int maxRight = Integer.MIN_VALUE;
         int maxBottom = Integer.MIN_VALUE;
         
-        for (Rect rect : topAreas) {
+        for (Rect rect : boundingBoxes) {
+            if (rect == null) continue;
             minLeft = Math.min(minLeft, rect.left);
             minTop = Math.min(minTop, rect.top);
             maxRight = Math.max(maxRight, rect.right);
             maxBottom = Math.max(maxBottom, rect.bottom);
         }
         
-        // Create a single combined bounding box
+        if (minLeft == Integer.MAX_VALUE) {
+            return new ArrayList<>();
+        }
+        
         Rect combinedRect = new Rect(minLeft, minTop, maxRight, maxBottom);
         
-        Log.d(TAG, "Combined " + topAreas.size() + " text areas into single bounding box: " + 
-              "(" + minLeft + ", " + minTop + ", " + maxRight + ", " + maxBottom + ")");
+        Log.d(TAG, "Combined " + boundingBoxes.size() + " text areas into single bounding box: " +
+                "(" + minLeft + ", " + minTop + ", " + maxRight + ", " + maxBottom + ")");
         
-        // Return list with single combined bounding box
         List<Rect> result = new ArrayList<>();
         result.add(combinedRect);
         return result;

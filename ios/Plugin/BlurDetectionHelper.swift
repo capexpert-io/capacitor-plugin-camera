@@ -191,8 +191,8 @@ class BlurDetectionHelper {
             if textResult.totalWords > 0 {
                 print("\(Self.TAG): Text detected: \(textResult.totalWords) words")
                 
-                // Get top 3 largest text areas combined into a single bounding box
-                let topTextAreas = getTopTextAreas(boundingBoxes: textResult.boundingBoxes, topN: 3)
+                // Combine all detected text areas into a single bounding box
+                let topTextAreas = combineAllTextAreas(boundingBoxes: textResult.boundingBoxes)
                 
                 if !topTextAreas.isEmpty {
                     // Process ROIs from text areas
@@ -275,7 +275,7 @@ class BlurDetectionHelper {
             let sharpConfidence = probabilities.count > 1 ? Double(probabilities[1]) : 0.0
             
             // Determine if image is blurry using TFLite confidence
-            let isBlur = sharpConfidence < 0.75
+            let isBlur = sharpConfidence < 0.1
 
             
             // Return 1.0 for blur, 0.0 for sharp (to maintain double return type)
@@ -545,7 +545,7 @@ class BlurDetectionHelper {
             let sharpConfidence = probabilities.count > 1 ? Double(probabilities[1]) : 0.0
             
             // Determine if image is blurry using TFLite confidence
-            let isBlur = sharpConfidence < 0.75
+            let isBlur = sharpConfidence < 0.1
 
             print(" TFLite Blur Detection Result: \(blurConfidence), \(sharpConfidence)")
             
@@ -667,51 +667,40 @@ class BlurDetectionHelper {
      * @param topN Number of top areas to combine
      * @return List containing a single combined bounding box
      */
-    private func getTopTextAreas(boundingBoxes: [[Double]], topN: Int = 3) -> [CGRect] {
+    private func combineAllTextAreas(boundingBoxes: [[Double]]) -> [CGRect] {
+        
         if boundingBoxes.isEmpty {
             return []
         }
         
-        // Convert to CGRect and sort by area (largest first)
+        // Convert to CGRects
         let rects = boundingBoxes.compactMap { box -> CGRect? in
             guard box.count >= 4 else { return nil }
             return CGRect(x: box[0], y: box[1], width: box[2] - box[0], height: box[3] - box[1])
         }
         
-        let sorted = rects.sorted { rect1, rect2 in
-            let area1 = rect1.width * rect1.height
-            let area2 = rect2.width * rect2.height
-            return area1 > area2
-        }
-        
-        // Get top N areas
-        let topAreas = Array(sorted.prefix(min(topN, sorted.count)))
-        
-        // Combine all top areas into a single bounding box
-        if topAreas.isEmpty {
+        if rects.isEmpty {
             return []
         }
         
-        // Find the minimum and maximum coordinates to create a combined bounding box
+        // Find the min/max across all boxes to create one combined bounding box
         var minX = CGFloat.greatestFiniteMagnitude
         var minY = CGFloat.greatestFiniteMagnitude
         var maxX = -CGFloat.greatestFiniteMagnitude
         var maxY = -CGFloat.greatestFiniteMagnitude
         
-        for rect in topAreas {
+        for rect in rects {
             minX = min(minX, rect.minX)
             minY = min(minY, rect.minY)
             maxX = max(maxX, rect.maxX)
             maxY = max(maxY, rect.maxY)
         }
         
-        // Create a single combined bounding box
         let combinedRect = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
         
-        print("\(Self.TAG): Combined \(topAreas.count) text areas into single bounding box: " +
+        print("\(Self.TAG): Combined \(rects.count) text areas into single bounding box: " +
               "(\(minX), \(minY), \(maxX), \(maxY))")
         
-        // Return list with single combined bounding box
         return [combinedRect]
     }
     
@@ -754,17 +743,42 @@ class BlurDetectionHelper {
     }
     
     /**
-     * Crop an image to the specified rectangle
-     * @param image Source image
-     * @param rect Rectangle to crop
-     * @return Cropped image or nil if invalid
-     */
+    * Crop an image to the specified rectangle
+    * Supports both normalized (0-1) and pixel-based rectangles
+    * Handles orientation, scale, and floating-point tolerance
+    */
     private func cropImage(image: UIImage, rect: CGRect) -> UIImage? {
+
+        print("cropImage image: \(image.size.width), \(image.size.height)")
+        print("cropImage image.scale: \(image.scale)")
+        print("cropImage image.imageOrientation: \(image.imageOrientation)")
+        print("cropImage rect: minX: \(rect.minX), minY: \(rect.minY), maxX: \(rect.maxX), maxY: \(rect.maxY), width: \(rect.width), height:\(rect.height)")
+
         guard let cgImage = image.cgImage else { return nil }
         
-        // Support both normalized (0-1) and pixel-based rectangles
-        let imageSize = CGSize(width: cgImage.width, height: cgImage.height)
-        let isNormalized = rect.maxX <= 1.0 && rect.maxY <= 1.0 && rect.width <= 1.0 && rect.height <= 1.0 && rect.minX >= 0.0 && rect.minY >= 0.0
+        // First normalize the image to handle orientation
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = image.scale
+        format.opaque = false
+        
+        let renderer = UIGraphicsImageRenderer(size: image.size, format: format)
+        let normalizedImage = renderer.image { _ in
+            image.draw(in: CGRect(origin: .zero, size: image.size))
+        }
+        guard let normalizedCGImage = normalizedImage.cgImage else { return nil }
+        
+        let imageSize = CGSize(width: normalizedCGImage.width, height: normalizedCGImage.height)
+        
+        // Detect normalized rect with tolerance
+        let epsilon: CGFloat = 0.0001
+        let isNormalized =
+            rect.minX >= -epsilon &&
+            rect.minY >= -epsilon &&
+            rect.maxX <= 1.0 + epsilon &&
+            rect.maxY <= 1.0 + epsilon &&
+            rect.width <= 1.0 + epsilon &&
+            rect.height <= 1.0 + epsilon
+        
         let cropRect: CGRect
         if isNormalized {
             cropRect = CGRect(
@@ -777,7 +791,7 @@ class BlurDetectionHelper {
             cropRect = rect
         }
         
-        // Ensure bounds are within image
+        // Clamp to image bounds
         let clampedRect = CGRect(
             x: max(0, cropRect.minX),
             y: max(0, cropRect.minY),
@@ -787,12 +801,14 @@ class BlurDetectionHelper {
         
         guard clampedRect.width > 0 && clampedRect.height > 0 else { return nil }
         
-        if let croppedCGImage = cgImage.cropping(to: clampedRect) {
-            return UIImage(cgImage: croppedCGImage)
+        // Perform crop
+        if let croppedCGImage = normalizedCGImage.cropping(to: clampedRect) {
+            return UIImage(cgImage: croppedCGImage, scale: image.scale, orientation: .up)
         }
         
         return nil
     }
+
     
     /**
      * Initialize common English words for dictionary check
