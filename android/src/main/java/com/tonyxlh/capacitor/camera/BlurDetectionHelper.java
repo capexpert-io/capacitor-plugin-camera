@@ -66,6 +66,11 @@ public class BlurDetectionHelper {
     private static final double MIN_WORD_CONFIDENCE = 0.8; // 80% confidence threshold
     private static final double AT_LEAST_N_PERCENT_OF_WORDS_ARE_READABLE = 0.6; // 60% of words are readable
     private static final double AT_LEAST_N_PERCENT_OF_AVERAGE_CONFIDENCE = 0.85; // 85% of average confidence
+
+    // Method based confidence threshold
+    private static final double MIN_SHARP_CONFIDENCE_FOR_OBJECT_DETECTION = 0.4; // 40% confidence threshold
+    private static final double MIN_SHARP_CONFIDENCE_FOR_TEXT_DETECTION = 0.1; // 10% confidence threshold
+    private static final double MIN_SHARP_CONFIDENCE_FOR_FULL_IMAGE = 0.7; // 70% confidence threshold
     
     // TFLite components
     private Interpreter tflite;
@@ -239,7 +244,7 @@ public class BlurDetectionHelper {
                             Bitmap roi = cropBitmap(bitmap, boundingBox);
                             if (roi != null) {
                                 // Run TFLite blur detection on ROI
-                                Map<String, Object> roiResult = detectBlurWithTFLiteConfidence(roi);
+                                Map<String, Object> roiResult = detectBlurWithTFLiteConfidence(roi, MIN_SHARP_CONFIDENCE_FOR_OBJECT_DETECTION);
 
                                 Log.d(TAG, "Object Detection ROI Result isBlur: " + roiResult.get("isBlur"));
                                 roiResult.put("boundingBox", boundingBox);
@@ -299,7 +304,7 @@ public class BlurDetectionHelper {
             
             // Step 3: Full-Image Blur Detection (Final Fallback)
             Log.d(TAG, "Step 3: Using Full-Image Blur Detection");
-            return detectBlurWithTFLiteConfidence(bitmap);
+            return detectBlurWithTFLiteConfidence(bitmap, MIN_SHARP_CONFIDENCE_FOR_FULL_IMAGE);
             
         } catch (Exception e) {
             Log.e(TAG, "Error in blur detection pipeline: " + e.getMessage());
@@ -355,7 +360,7 @@ public class BlurDetectionHelper {
             double sharpConfidence = probabilities.length > 1 ? probabilities[1] : 0.0;
 
             // Determine if image is blurry using TFLite confidence
-            boolean isBlur = sharpConfidence < 0.80;
+            boolean isBlur = sharpConfidence < MIN_SHARP_CONFIDENCE_FOR_FULL_IMAGE;
             
             
             // Return 1.0 for blur, 0.0 for sharp (to maintain double return type)
@@ -498,7 +503,7 @@ public class BlurDetectionHelper {
      * @param bitmap Input image bitmap
      * @return Map with isBlur, blurConfidence, and sharpConfidence
      */
-    public java.util.Map<String, Object> detectBlurWithTFLiteConfidence(Bitmap bitmap) {
+    public java.util.Map<String, Object> detectBlurWithTFLiteConfidence(Bitmap bitmap, double minSharpConfidence) {
         java.util.Map<String, Object> result = new java.util.HashMap<>();
         
         if (!isInitialized || tflite == null) {
@@ -553,7 +558,7 @@ public class BlurDetectionHelper {
             Log.d(TAG, "TFLite Blur confidence: " + blurConfidence + " Sharp confidence: " + sharpConfidence);
 
             // Determine if image is blurry using TFLite confidence
-            boolean isBlur = sharpConfidence < 0.80;
+            boolean isBlur = sharpConfidence < minSharpConfidence;
             
             Log.d(TAG, "TFLite Blur detection isBlur: " + isBlur);
             
@@ -783,7 +788,7 @@ public class BlurDetectionHelper {
                 try {
                     Bitmap cropped = cropBitmap(bitmap, roi);
                     if (cropped != null) {
-                        Map<String, Object> result = detectBlurWithTFLiteConfidence(cropped);
+                        Map<String, Object> result = detectBlurWithTFLiteConfidence(cropped, MIN_SHARP_CONFIDENCE_FOR_TEXT_DETECTION);
                         result.put("boundingBox", roi);
                         results.add(result);
                     }
