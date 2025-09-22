@@ -161,7 +161,7 @@ class BlurDetectionHelper {
                     // Crop ROI from original image
                     if let roi = cropImage(image: image, rect: boundingBox) {
                         // Run TFLite blur detection on ROI
-                        var roiResult = detectBlurWithTFLiteConfidence(image: roi, Self.MIN_SHARP_CONFIDENCE_FOR_OBJECT_DETECTION)
+                        var roiResult = detectBlurWithTFLiteConfidence(image: roi, minSharpConfidence: Self.MIN_SHARP_CONFIDENCE_FOR_OBJECT_DETECTION)
                         
                         print("\(Self.TAG): Object Detection ROI Result isBlur: \(roiResult["isBlur"] ?? false)")
                         roiResult["boundingBox"] = [
@@ -237,7 +237,7 @@ class BlurDetectionHelper {
         
         // Step 3: Full-Image Blur Detection (Final Fallback)
         print("\(Self.TAG): Step 3: Using Full-Image Blur Detection")
-        return detectBlurWithTFLiteConfidence(image: image, Self.MIN_SHARP_CONFIDENCE_FOR_FULL_IMAGE)
+        return detectBlurWithTFLiteConfidence(image: image, minSharpConfidence: Self.MIN_SHARP_CONFIDENCE_FOR_FULL_IMAGE)
     }
     
     /**
@@ -488,7 +488,7 @@ class BlurDetectionHelper {
      * @param image Input UIImage
      * @return Dictionary with isBlur, blurConfidence, and sharpConfidence
      */
-    func detectBlurWithTFLiteConfidence(image: UIImage, minSharpConfidence: Double = Self.MIN_SHARP_CONFIDENCE_FOR_FULL_IMAGE) -> [String: Any] {
+    func detectBlurWithTFLiteConfidence(image: UIImage, minSharpConfidence: Double) -> [String: Any] {
         guard isInitialized, let interpreter = interpreter else {
             let laplacianScore = calculateLaplacianBlurScore(image: image)
             let isBlur = laplacianScore < 150
@@ -726,7 +726,7 @@ class BlurDetectionHelper {
                 defer { group.leave() }
                 
                 if let cropped = self.cropImage(image: image, rect: roi) {
-                    var result = self.detectBlurWithTFLiteConfidence(image: cropped, Self.MIN_SHARP_CONFIDENCE_FOR_TEXT_DETECTION)
+                    var result = self.detectBlurWithTFLiteConfidence(image: cropped, minSharpConfidence: Self.MIN_SHARP_CONFIDENCE_FOR_TEXT_DETECTION)
                     result["boundingBox"] = [
                         roi.minX,
                         roi.minY,
