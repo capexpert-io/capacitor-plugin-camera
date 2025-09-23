@@ -56,7 +56,7 @@ import java.util.concurrent.atomic.AtomicReference;
 public class BlurDetectionHelper {
     private static final String TAG = "BlurDetectionHelper";
     private static final String MODEL_FILENAME = "blur_detection_model.tflite";
-    private static int INPUT_SIZE = 224; // Will be updated based on actual model input size
+    private static int INPUT_SIZE = 600; // Will be updated based on actual model input size
     private static final int NUM_CLASSES = 2; // blur, sharp
     
     // Timeout settings
@@ -68,9 +68,9 @@ public class BlurDetectionHelper {
     private static final double AT_LEAST_N_PERCENT_OF_AVERAGE_CONFIDENCE = 0.85; // 85% of average confidence
 
     // Method based confidence threshold
-    private static final double MIN_SHARP_CONFIDENCE_FOR_OBJECT_DETECTION = 0.4; // 40% confidence threshold
-    private static final double MIN_SHARP_CONFIDENCE_FOR_TEXT_DETECTION = 0.1; // 10% confidence threshold
-    private static final double MIN_SHARP_CONFIDENCE_FOR_FULL_IMAGE = 0.7; // 70% confidence threshold
+    private static final double MIN_SHARP_CONFIDENCE_FOR_OBJECT_DETECTION = 0.75; // 75% confidence threshold
+    private static final double MIN_SHARP_CONFIDENCE_FOR_TEXT_DETECTION = 0.15; // 15% confidence threshold
+    private static final double MIN_SHARP_CONFIDENCE_FOR_FULL_IMAGE = 0.75; // 70% confidence threshold
     
     // TFLite components
     private Interpreter tflite;
@@ -96,10 +96,9 @@ public class BlurDetectionHelper {
 
 
     public BlurDetectionHelper() {
-        // Initialize image processor for MobileNetV2 preprocessing
+        // Initialize image processor for MobileNetV2 preprocessing with aspect ratio preservation
         imageProcessor = new ImageProcessor.Builder()
-                .add(new ResizeWithCropOrPadOp(INPUT_SIZE, INPUT_SIZE))
-                .add(new ResizeOp(INPUT_SIZE, INPUT_SIZE, ResizeOp.ResizeMethod.BILINEAR))
+                .add(new ResizeWithCropOrPadOp(INPUT_SIZE, INPUT_SIZE)) // This preserves aspect ratio by cropping/padding
                 .build();
         
         // Initialize common words dictionary
@@ -151,10 +150,9 @@ public class BlurDetectionHelper {
                 if (modelInputSize != INPUT_SIZE) {
                     INPUT_SIZE = modelInputSize;
                     
-                    // Recreate image processor with correct size
+                    // Recreate image processor with correct size and aspect ratio preservation
                     imageProcessor = new ImageProcessor.Builder()
-                        .add(new ResizeWithCropOrPadOp(INPUT_SIZE, INPUT_SIZE))
-                        .add(new ResizeOp(INPUT_SIZE, INPUT_SIZE, ResizeOp.ResizeMethod.BILINEAR))
+                        .add(new ResizeWithCropOrPadOp(INPUT_SIZE, INPUT_SIZE)) // Preserves aspect ratio
                         .build();
                 }
             }
@@ -334,6 +332,9 @@ public class BlurDetectionHelper {
             // Preprocess image for model (resize and potential enhancement)
             inputImageBuffer.load(processedBitmap);
             inputImageBuffer = imageProcessor.process(inputImageBuffer);
+            
+            // Ensure black padding for better accuracy (matches iOS implementation)
+            ensureBlackPadding(inputImageBuffer);
 
             // Get tensor buffer
             ByteBuffer tensorBuffer = inputImageBuffer.getBuffer();
@@ -424,6 +425,37 @@ public class BlurDetectionHelper {
          normalizedBuffer.rewind();
          return normalizedBuffer;
      }
+
+    /**
+     * Ensure black padding in the processed image buffer for better accuracy
+     * @param tensorImage Processed tensor image
+     */
+    private void ensureBlackPadding(TensorImage tensorImage) {
+        ByteBuffer buffer = tensorImage.getBuffer();
+        DataType dataType = tensorImage.getDataType();
+        
+        if (dataType == DataType.FLOAT32) {
+            // For float32, ensure padding areas are 0.0 (black)
+            FloatBuffer floatBuffer = buffer.asFloatBuffer();
+            int totalPixels = INPUT_SIZE * INPUT_SIZE * 3;
+            
+            // Check if we need to fill with zeros (black)
+            for (int i = 0; i < totalPixels; i++) {
+                if (floatBuffer.get(i) < 0.001f) { // Near zero values
+                    floatBuffer.put(i, 0.0f); // Ensure exact zero (black)
+                }
+            }
+        } else if (dataType == DataType.UINT8) {
+            // For uint8, ensure padding areas are 0 (black)
+            buffer.rewind();
+            while (buffer.hasRemaining()) {
+                byte value = buffer.get();
+                if (value == 0) {
+                    buffer.put(buffer.position() - 1, (byte) 0); // Ensure exact zero
+                }
+            }
+        }
+    }
 
     /**
      * Normalize image buffer from uint8 [0,255] to float32 [0,1]
@@ -530,6 +562,9 @@ public class BlurDetectionHelper {
             // Preprocess image for model (resize and potential enhancement)
             inputImageBuffer.load(processedBitmap);
             inputImageBuffer = imageProcessor.process(inputImageBuffer);
+            
+            // Ensure black padding for better accuracy (matches iOS implementation)
+            ensureBlackPadding(inputImageBuffer);
 
             // Get tensor buffer
             ByteBuffer tensorBuffer = inputImageBuffer.getBuffer();

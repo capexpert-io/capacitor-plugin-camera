@@ -12,8 +12,8 @@ import MLKitVision
 class BlurDetectionHelper {
     
     private static let TAG = "BlurDetectionHelper"
-    private static let INPUT_WIDTH = 224 // Model's expected input width
-    private static let INPUT_HEIGHT = 224 // Model's expected input height
+    private static let INPUT_WIDTH = 600 // Model's expected input width
+    private static let INPUT_HEIGHT = 600 // Model's expected input height
     private static let BATCH_SIZE = 1 // Model expects a batch size of 1
     private static let NUM_CHANNELS = 3 // RGB
     private static let NUM_CLASSES = 2 // blur, sharp
@@ -27,9 +27,9 @@ class BlurDetectionHelper {
     private static let AT_LEAST_N_PERCENT_OF_AVERAGE_CONFIDENCE: Double = 0.85 // 85% of average confidence
 
     // Method based confidence threshold
-    private static let MIN_SHARP_CONFIDENCE_FOR_OBJECT_DETECTION: Double = 0.3 // 40% confidence threshold
-    private static let MIN_SHARP_CONFIDENCE_FOR_TEXT_DETECTION: Double = 0.09 // 10% confidence threshold
-    private static let MIN_SHARP_CONFIDENCE_FOR_FULL_IMAGE: Double = 0.7 // 70% confidence threshold
+    private static let MIN_SHARP_CONFIDENCE_FOR_OBJECT_DETECTION: Double = 0.75 // 75% confidence threshold
+    private static let MIN_SHARP_CONFIDENCE_FOR_TEXT_DETECTION: Double = 0.15 // 15% confidence threshold
+    private static let MIN_SHARP_CONFIDENCE_FOR_FULL_IMAGE: Double = 0.75 // 75% confidence threshold
     	
     private var interpreter: Interpreter?
     private var isInitialized = false
@@ -391,11 +391,37 @@ class BlurDetectionHelper {
     }
     
     /**
-     * Resize image to target size
+     * Resize image to target size while maintaining aspect ratio
      */
     private func resizeImage(_ image: UIImage, to size: CGSize) -> UIImage? {
-        UIGraphicsBeginImageContextWithOptions(size, false, 1.0)
-        image.draw(in: CGRect(origin: .zero, size: size))
+        let targetSize = size
+        let imageSize = image.size
+        
+        // Calculate aspect ratio preserving dimensions
+        let widthRatio = targetSize.width / imageSize.width
+        let heightRatio = targetSize.height / imageSize.height
+        let scaleFactor = min(widthRatio, heightRatio)
+        
+        let scaledSize = CGSize(
+            width: imageSize.width * scaleFactor,
+            height: imageSize.height * scaleFactor
+        )
+        
+        // Create a square canvas with the target size
+        UIGraphicsBeginImageContextWithOptions(targetSize, false, 1.0)
+        
+        // Calculate position to center the scaled image
+        let x = (targetSize.width - scaledSize.width) / 2
+        let y = (targetSize.height - scaledSize.height) / 2
+        let drawRect = CGRect(x: x, y: y, width: scaledSize.width, height: scaledSize.height)
+        
+        // Fill background with black (or white) to pad the image
+        UIColor.black.setFill()
+        UIRectFill(CGRect(origin: .zero, size: targetSize))
+        
+        // Draw the scaled image centered
+        image.draw(in: drawRect)
+        
         let resizedImage = UIGraphicsGetImageFromCurrentImageContext()
         UIGraphicsEndImageContext()
         return resizedImage
