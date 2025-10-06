@@ -802,6 +802,13 @@ public class BlurDetectionHelper {
         
         Log.d(TAG, "Combined " + boundingBoxes.size() + " text areas into single bounding box: " +
                 "(" + minLeft + ", " + minTop + ", " + maxRight + ", " + maxBottom + ")");
+
+        // Minimum width and height
+        int minWidth = 100;
+        int minHeight = 20;
+        if (combinedRect.width() < minWidth || combinedRect.height() < minHeight) {
+            return new ArrayList<>();
+        }
         
         List<Rect> result = new ArrayList<>();
         result.add(combinedRect);
