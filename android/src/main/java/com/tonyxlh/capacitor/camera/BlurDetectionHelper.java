@@ -68,9 +68,9 @@ public class BlurDetectionHelper {
     private static final double AT_LEAST_N_PERCENT_OF_AVERAGE_CONFIDENCE = 0.85; // 85% of average confidence
 
     // Method based confidence threshold
-    private static final double MIN_SHARP_CONFIDENCE_FOR_OBJECT_DETECTION = 0.75; // 75% confidence threshold
-    private static final double MIN_SHARP_CONFIDENCE_FOR_TEXT_DETECTION = 0.15; // 15% confidence threshold
-    private static final double MIN_SHARP_CONFIDENCE_FOR_FULL_IMAGE = 0.75; // 70% confidence threshold
+    private static final double MIN_SHARP_CONFIDENCE_FOR_OBJECT_DETECTION = 0.5; // 50% confidence threshold
+    private static final double MIN_SHARP_CONFIDENCE_FOR_TEXT_DETECTION = 0.09; // 9% confidence threshold
+    private static final double MIN_SHARP_CONFIDENCE_FOR_FULL_IMAGE = 0.60; // 60% confidence threshold
     
     // TFLite components
     private Interpreter tflite;

@@ -27,9 +27,9 @@ class BlurDetectionHelper {
     private static let AT_LEAST_N_PERCENT_OF_AVERAGE_CONFIDENCE: Double = 0.85 // 85% of average confidence
 
     // Method based confidence threshold
-    private static let MIN_SHARP_CONFIDENCE_FOR_OBJECT_DETECTION: Double = 0.75 // 75% confidence threshold
-    private static let MIN_SHARP_CONFIDENCE_FOR_TEXT_DETECTION: Double = 0.15 // 15% confidence threshold
-    private static let MIN_SHARP_CONFIDENCE_FOR_FULL_IMAGE: Double = 0.75 // 75% confidence threshold
+    private static let MIN_SHARP_CONFIDENCE_FOR_OBJECT_DETECTION: Double = 0.5 // 50% confidence threshold
+    private static let MIN_SHARP_CONFIDENCE_FOR_TEXT_DETECTION: Double = 0.09 // 9% confidence threshold
+    private static let MIN_SHARP_CONFIDENCE_FOR_FULL_IMAGE: Double = 0.6 // 60% confidence threshold
     	
     private var interpreter: Interpreter?
     private var isInitialized = false
