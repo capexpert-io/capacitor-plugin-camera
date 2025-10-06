@@ -79,7 +79,9 @@ public class CameraPreviewPlugin: CAPPlugin, AVCaptureVideoDataOutputSampleBuffe
             
             // Initialize TFLite blur detection helper
             self.blurDetectionHelper = BlurDetectionHelper()
-            let tfliteInitialized = self.blurDetectionHelper?.initialize() ?? false
+            if let initialized = self.blurDetectionHelper?.initialize(), !initialized {
+                print("CameraPreviewPlugin: BlurDetectionHelper failed to initialize; falling back when needed")
+            }
             // Only initialize capture session if permission is granted
             if authStatus == .authorized {
                 self.initializeCaptureSession(enableVideoRecording: false)
@@ -511,18 +513,37 @@ public class CameraPreviewPlugin: CAPPlugin, AVCaptureVideoDataOutputSampleBuffe
                     // Get blur detection result with bounding boxes in one call
                     if let helper = blurDetectionHelper, helper.getIsInitialized() {
                         let blurResult = helper.detectBlurWithConfidence(image: normalized)
-                        if let blurConfidence = blurResult["blurConfidence"] as? Double {
-                            ret["confidence"] = blurConfidence
+                        
+                        // Extract blur detection results
+                        let isBlur = blurResult["isBlur"] as? Bool ?? false
+                        let method = blurResult["method"] as? String ?? "unknown"
+                        
+                        ret["isBlur"] = isBlur
+                        ret["detectionMethod"] = method
+                        
+                        // Calculate confidence based on method
+                        let confidence = calculateBlurConfidence(from: blurResult)
+                        ret["confidence"] = confidence
+                        
+                        // Handle bounding boxes - prefer roiResults when available; otherwise fallback to top-level boundingBoxes
+                        var combinedBoxes: [[Double]] = []
+                        if let roiResults = blurResult["roiResults"] as? [[String: Any]] {
+                            for roi in roiResults {
+                                if let boundingBox = roi["boundingBox"] as? [Double], boundingBox.count >= 4 {
+                                    combinedBoxes.append(boundingBox)
+                                }
+                            }
                         }
-                        if let boundingBoxes = blurResult["boundingBoxes"] as? [[Double]] {
-                            ret["boundingBoxes"] = boundingBoxes
-                        } else {
-                            ret["boundingBoxes"] = [[Double]]()
+                        if combinedBoxes.isEmpty, let topLevelBoxes = blurResult["boundingBoxes"] as? [[Double]] {
+                            combinedBoxes = topLevelBoxes
                         }
+                        ret["boundingBoxes"] = combinedBoxes
                     } else {
                         // Fallback to Laplacian algorithm
                         let confidence = calculateBlurConfidence(image: normalized)
                         ret["confidence"] = confidence
+                        ret["isBlur"] = false
+                        ret["detectionMethod"] = "laplacian_fallback"
                         ret["boundingBoxes"] = [[Double]]()
                     }
                 } else {
@@ -1269,10 +1290,77 @@ public class CameraPreviewPlugin: CAPPlugin, AVCaptureVideoDataOutputSampleBuffe
             return
         }
         
-        // Use the new confidence detection method
+        // Use the new 3-step pipeline confidence detection method
         if let helper = blurDetectionHelper, helper.getIsInitialized() {
             let result = helper.detectBlurWithConfidence(image: image)
-            call.resolve(result)
+            
+            var response: [String: Any] = [:]
+            response["isBlur"] = result["isBlur"] ?? false
+            response["method"] = result["method"] ?? "unknown"
+            
+            // Handle different confidence values based on detection method
+            let method = result["method"] as? String ?? "unknown"
+            let blurConfidence = result["blurConfidence"] as? Double
+            let sharpConfidence = result["sharpConfidence"] as? Double
+            let textConfidence = result["textConfidence"] as? Double
+            
+            if method == "text_detection" && textConfidence != nil {
+                // For text detection, use text confidence as sharp confidence
+                response["sharpConfidence"] = textConfidence
+                response["blurConfidence"] = 1.0 - textConfidence!
+            } else if method == "tflite" && sharpConfidence != nil {
+                // For TFLite model, use the provided confidence values
+                response["sharpConfidence"] = sharpConfidence
+                response["blurConfidence"] = blurConfidence ?? (1.0 - sharpConfidence!)
+            } else if method == "laplacian" && sharpConfidence != nil {
+                // For Laplacian fallback, use the provided confidence values
+                response["sharpConfidence"] = sharpConfidence
+                response["blurConfidence"] = blurConfidence ?? (1.0 - sharpConfidence!)
+            } else if sharpConfidence != nil {
+                // Generic fallback for any method with sharp confidence
+                response["sharpConfidence"] = sharpConfidence
+                response["blurConfidence"] = blurConfidence ?? (1.0 - sharpConfidence!)
+            } else if blurConfidence != nil {
+                // Fallback if only blur confidence is available
+                response["blurConfidence"] = blurConfidence
+                response["sharpConfidence"] = 1.0 - blurConfidence!
+            } else {
+                // Final fallback values
+                let isBlur = result["isBlur"] as? Bool ?? false
+                response["blurConfidence"] = isBlur ? 1.0 : 0.0
+                response["sharpConfidence"] = isBlur ? 0.0 : 1.0
+            }
+            
+            // Add additional information if available
+            if let roiResults = result["roiResults"] as? [[String: Any]] {
+                var boundingBoxes: [[Double]] = []
+                
+                for roi in roiResults {
+                    if let boundingBox = roi["boundingBox"] as? [Double], boundingBox.count >= 4 {
+                        boundingBoxes.append(boundingBox)
+                    }
+                }
+                response["boundingBoxes"] = boundingBoxes
+            } else if let boundingBoxes = result["boundingBoxes"] as? [[Double]] {
+                response["boundingBoxes"] = boundingBoxes
+            } else {
+                response["boundingBoxes"] = [[Double]]()
+            }
+            
+            // Add method-specific information
+            if method == "object_detection" {
+                response["objectCount"] = result["objectCount"] ?? 0
+                response["roiResults"] = result["roiResults"] ?? []
+            } else if method == "text_detection" {
+                response["textConfidence"] = result["textConfidence"] ?? 0.0
+                response["wordCount"] = result["wordCount"] ?? 0
+                response["readableWords"] = result["readableWords"] ?? 0
+                response["roiResults"] = result["roiResults"] ?? []
+            } else if method == "laplacian" {
+                response["laplacianScore"] = result["laplacianScore"] ?? 0.0
+            }
+            
+            call.resolve(response)
         } else {
             // Fallback to Laplacian algorithm with confidence scores
             let laplacianScore = calculateLaplacianBlurScore(image: image)
@@ -1283,8 +1371,11 @@ public class CameraPreviewPlugin: CAPPlugin, AVCaptureVideoDataOutputSampleBuffe
             
             call.resolve([
                 "isBlur": isBlur,
+                "method": "laplacian",
                 "blurConfidence": blurConfidence,
-                "sharpConfidence": sharpConfidence
+                "sharpConfidence": sharpConfidence,
+                "laplacianScore": laplacianScore,
+                "boundingBoxes": [[Double]]()
             ])
         }
     }
@@ -1306,7 +1397,7 @@ public class CameraPreviewPlugin: CAPPlugin, AVCaptureVideoDataOutputSampleBuffe
         } else {
             // Fallback to original Laplacian algorithm
             let laplacianScore = calculateLaplacianBlurScore(image: image)
-            return laplacianScore < 50
+            return laplacianScore < 150
         }
     }
 
@@ -1317,15 +1408,63 @@ public class CameraPreviewPlugin: CAPPlugin, AVCaptureVideoDataOutputSampleBuffe
         // Use TFLite model if available for detailed confidence
         if let helper = blurDetectionHelper, helper.getIsInitialized() {
             let result = helper.detectBlurWithConfidence(image: image)
-            if let blurConfidence = result["blurConfidence"] as? Double {
-                return blurConfidence
-            }
+            return calculateBlurConfidence(from: result)
         }
         
         // Fallback to Laplacian algorithm with confidence calculation
         let laplacianScore = calculateLaplacianBlurScore(image: image)
         // Normalize to 0-1 range (higher score = sharper image)
         return max(0.0, min(1.0, laplacianScore / 300.0))
+    }
+    
+    /**
+     * Calculate blur confidence from blur detection result
+     * @param result Blur detection result dictionary
+     * @return Confidence score (0-1 where 1 is sharp, 0 is blurry)
+     */
+    private func calculateBlurConfidence(from result: [String: Any]) -> Double {
+        let method = result["method"] as? String ?? "unknown"
+        let isBlur = result["isBlur"] as? Bool ?? false
+        
+        print("Camera: Blur detection isBlur: \(isBlur)")
+        print("Camera: Blur detection method: \(method)")
+        
+        // Handle different detection methods
+        switch method {
+        case "object_detection":
+            // For object detection, check if any ROI is blurry
+            return isBlur ? 0.0 : 1.0 // 0 = blurry, 1 = sharp
+            
+        case "text_detection":
+            // For text detection, use text confidence if available
+            if let textConfidence = result["textConfidence"] as? Double {
+                // Convert text confidence to blur confidence (higher text confidence = sharper image)
+                return max(0.0, min(1.0, textConfidence))
+            } else {
+                return isBlur ? 0.0 : 1.0
+            }
+            
+        case "tflite":
+            // For TFLite model, use sharp confidence
+            if let sharpConfidence = result["sharpConfidence"] as? Double {
+                return sharpConfidence
+            } else {
+                return isBlur ? 0.0 : 1.0
+            }
+            
+        case "laplacian":
+            // For Laplacian fallback, use the sharp confidence
+            if let sharpConfidence = result["sharpConfidence"] as? Double {
+                return sharpConfidence
+            } else {
+                return isBlur ? 0.0 : 1.0
+            }
+        default:
+            break
+        }
+        
+        // Fallback to boolean result if available
+        return isBlur ? 0.0 : 1.0
     }
     
     // Original Laplacian blur detection (fallback)

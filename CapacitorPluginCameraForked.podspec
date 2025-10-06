@@ -16,6 +16,8 @@ Pod::Spec.new do |s|
   s.dependency 'Capacitor'
   s.dependency 'TensorFlowLiteSwift', '~> 2.17.0'
   s.dependency 'TensorFlowLiteC', '~> 2.17.0'
+  s.dependency 'MLKitObjectDetection'
+  s.dependency 'MLKitTextRecognition', '~> 7.0.0'
   s.static_framework = true
   s.swift_version = '5.1'
 end

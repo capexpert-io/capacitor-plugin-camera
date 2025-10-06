@@ -2,7 +2,18 @@ package com.tonyxlh.capacitor.camera;
 
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.graphics.Rect;
 import android.util.Log;
+
+import com.google.mlkit.vision.common.InputImage;
+import com.google.mlkit.vision.objects.DetectedObject;
+import com.google.mlkit.vision.objects.ObjectDetection;
+import com.google.mlkit.vision.objects.ObjectDetector;
+import com.google.mlkit.vision.objects.defaults.ObjectDetectorOptions;
+import com.google.mlkit.vision.text.Text;
+import com.google.mlkit.vision.text.TextRecognition;
+import com.google.mlkit.vision.text.TextRecognizer;
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
 
 import org.tensorflow.lite.Interpreter;
 import org.tensorflow.lite.support.common.FileUtil;
@@ -23,46 +34,91 @@ import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.nio.MappedByteBuffer;
 import java.nio.ByteOrder;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * TensorFlow Lite Blur Detection Helper
- * Based on MobileNetV2 model trained for blur detection
+ * Comprehensive Blur Detection Helper
+ * Implements the 3-step pipeline: Object Detection -> Text Detection -> Full-Image Blur Detection
  */
 public class BlurDetectionHelper {
     private static final String TAG = "BlurDetectionHelper";
     private static final String MODEL_FILENAME = "blur_detection_model.tflite";
-    private static int INPUT_SIZE = 224; // Will be updated based on actual model input size
+    private static int INPUT_SIZE = 600; // Will be updated based on actual model input size
     private static final int NUM_CLASSES = 2; // blur, sharp
     
+    // Timeout settings
+    private static final int TIMEOUT_MS = 5000; // 5 second timeout
+    
+    // Text recognition settings
+    private static final double MIN_WORD_CONFIDENCE = 0.8; // 80% confidence threshold
+    private static final double AT_LEAST_N_PERCENT_OF_WORDS_ARE_READABLE = 0.6; // 60% of words are readable
+    private static final double AT_LEAST_N_PERCENT_OF_AVERAGE_CONFIDENCE = 0.85; // 85% of average confidence
+
+    // Method based confidence threshold
+    private static final double MIN_SHARP_CONFIDENCE_FOR_OBJECT_DETECTION = 0.75; // 75% confidence threshold
+    private static final double MIN_SHARP_CONFIDENCE_FOR_TEXT_DETECTION = 0.15; // 15% confidence threshold
+    private static final double MIN_SHARP_CONFIDENCE_FOR_FULL_IMAGE = 0.75; // 70% confidence threshold
+    
+    // TFLite components
     private Interpreter tflite;
     private ImageProcessor imageProcessor;
     private TensorImage inputImageBuffer;
     private TensorBuffer outputProbabilityBuffer;
-    private boolean isInitialized = false;
     
-    // Text recognition blur detection helper
-    private TextRecognitionBlurHelper textBlurHelper;
+    // ML Kit components
+    private ObjectDetector objectDetector;
+    private TextRecognizer textRecognizer;
+    
+    // Configuration flags
+    private boolean isInitialized = false;
+    private boolean useObjectDetection = true;
     private boolean useTextRecognition = true;
+    private boolean useDictionaryCheck = false;
+    
+    // Dictionary for text validation
+    private Set<String> commonWords;
+    
+    // Executor for parallel processing
+    private ExecutorService executorService;
 
 
     public BlurDetectionHelper() {
-        // Initialize image processor for MobileNetV2 preprocessing
-        // Note: Manual normalization will be done in detectBlur method
+        // Initialize image processor for MobileNetV2 preprocessing with aspect ratio preservation
         imageProcessor = new ImageProcessor.Builder()
-                .add(new ResizeWithCropOrPadOp(INPUT_SIZE, INPUT_SIZE))
-                .add(new ResizeOp(INPUT_SIZE, INPUT_SIZE, ResizeOp.ResizeMethod.BILINEAR))
+                .add(new ResizeWithCropOrPadOp(INPUT_SIZE, INPUT_SIZE)) // This preserves aspect ratio by cropping/padding
                 .build();
         
-        // Initialize text recognition blur helper
-        textBlurHelper = new TextRecognitionBlurHelper();
+        // Initialize common words dictionary
+        initializeCommonWords();
+        
+        // Initialize executor service for parallel processing
+        executorService = Executors.newFixedThreadPool(3);
     }
 
     /**
-     * Initialize the TFLite model
+     * Initialize all components (TFLite, Object Detection, Text Recognition)
      * @param context Android context to access assets
      * @return true if initialization successful
      */
     public boolean initialize(Context context) {
+        boolean tfliteInitialized = false;
+        boolean objectDetectorInitialized = false;
+        boolean textRecognizerInitialized = false;
+        
+        // Initialize TFLite model
         try {
             // Load model from assets
             MappedByteBuffer tfliteModel = FileUtil.loadMappedFile(context, MODEL_FILENAME);
@@ -81,80 +137,180 @@ public class BlurDetectionHelper {
             tflite = new Interpreter(tfliteModel, options);
             
             // Initialize input and output buffers
-            // Use the same data type as the model's input tensor
             inputImageBuffer = new TensorImage(tflite.getInputTensor(0).dataType());
             outputProbabilityBuffer = TensorBuffer.createFixedSize(
                     tflite.getOutputTensor(0).shape(),
                     tflite.getOutputTensor(0).dataType()
             );
             
-            // Initialize text recognition helper
-            textBlurHelper.initialize(context);
-            
             // Update INPUT_SIZE based on actual model input shape
             int[] inputShape = tflite.getInputTensor(0).shape();
-            
-            // Update INPUT_SIZE based on actual model input shape
-            // Expected format: [batch, height, width, channels] or [batch, channels, height, width]
             if (inputShape.length >= 3) {
-                // Assume format is [batch, height, width, channels]
                 int modelInputSize = inputShape[1]; // height dimension
                 if (modelInputSize != INPUT_SIZE) {
                     INPUT_SIZE = modelInputSize;
                     
-                    // Recreate image processor with correct size
+                    // Recreate image processor with correct size and aspect ratio preservation
                     imageProcessor = new ImageProcessor.Builder()
-                        .add(new ResizeWithCropOrPadOp(INPUT_SIZE, INPUT_SIZE))
-                        .add(new ResizeOp(INPUT_SIZE, INPUT_SIZE, ResizeOp.ResizeMethod.BILINEAR))
+                        .add(new ResizeWithCropOrPadOp(INPUT_SIZE, INPUT_SIZE)) // Preserves aspect ratio
                         .build();
                 }
             }
             
-            isInitialized = true;
-            return true;
+            tfliteInitialized = true;
             
-        } catch (IOException e) {
-            isInitialized = false;
-            return false;
         } catch (Exception e) {
-            isInitialized = false;
-            return false;
+            Log.e(TAG, "Failed to initialize TFLite model: " + e.getMessage());
         }
+        
+        // Initialize Object Detector
+        try {
+            ObjectDetectorOptions detectorOptions = new ObjectDetectorOptions.Builder()
+                    .setDetectorMode(ObjectDetectorOptions.SINGLE_IMAGE_MODE)
+                    .enableClassification()  // Enable classification to get confidence scores
+                    .build();
+            
+            objectDetector = ObjectDetection.getClient(detectorOptions);
+            objectDetectorInitialized = true;
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to initialize Object Detector: " + e.getMessage());
+        }
+        
+        // Initialize Text Recognizer
+        try {
+            textRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
+            textRecognizerInitialized = true;
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to initialize Text Recognizer: " + e.getMessage());
+        }
+        
+        // Set initialization status
+        isInitialized = tfliteInitialized || objectDetectorInitialized || textRecognizerInitialized;
+        
+        Log.d(TAG, "Initialization status - TFLite: " + tfliteInitialized + 
+                   ", Object Detection: " + objectDetectorInitialized + 
+                   ", Text Recognition: " + textRecognizerInitialized);
+        
+        return isInitialized;
     }
 
     /**
-     * Detect blur in image using hybrid approach (Text Recognition + TFLite)
+     * Main blur detection method implementing the 3-step pipeline
      * @param bitmap Input image bitmap
      * @return Blur confidence score (0.0 = sharp, 1.0 = very blurry)
      */
     public double detectBlur(Bitmap bitmap) {
-        // First try text recognition if enabled
-        if (useTextRecognition && textBlurHelper != null && textBlurHelper.isInitialized()) {
-            try {
-                java.util.Map<String, Object> textResult = textBlurHelper.detectBlurWithConfidence(bitmap);
-                Boolean hasText = (Boolean) textResult.get("hasText");
-                
-                if (hasText != null && hasText) {
-                    // Image contains text, use text recognition result
-                    Boolean isBlur = (Boolean) textResult.get("isBlur");
-                    Double textConfidence = (Double) textResult.get("textConfidence");
-                    Integer wordCount = (Integer) textResult.get("wordCount");
-                    Integer readableWords = (Integer) textResult.get("readableWords");
-                    
-                    
-                    if (isBlur != null) {
-                        double blurConfidence = isBlur ? 1.0 : 0.0;
-                        return blurConfidence;
-                    } else {
-                    }
-                } else {
-                }
-            } catch (Exception e) {
-            }
+        Map<String, Object> result = detectBlurWithConfidence(bitmap);
+        Boolean isBlur = (Boolean) result.get("isBlur");
+        return (isBlur != null && isBlur) ? 1.0 : 0.0;
+    }
+    
+    /**
+     * Detect blur with detailed confidence scores using the 3-step pipeline
+     * @param bitmap Input image bitmap
+     * @return Map with comprehensive blur detection results
+     */
+    public Map<String, Object> detectBlurWithConfidence(Bitmap bitmap) {
+        Map<String, Object> result = new HashMap<>();
+        
+        if (!isInitialized) {
+            result.put("isBlur", false);
+            result.put("method", "none");
+            result.put("error", "Blur detector not initialized");
+            return result;
         }
         
-        // Fallback to TFLite model
-        return detectBlurWithTFLite(bitmap);
+        try {
+            // Step 1: Object Detection (Preferred Path)
+            if (useObjectDetection && objectDetector != null) {
+                Log.d(TAG, "Step 1: Trying Object Detection");
+                List<DetectedObject> objects = detectObjects(bitmap);
+                
+                if (!objects.isEmpty()) {
+                    Log.d(TAG, "Objects detected: " + objects.size());
+                    
+                    // Process ROIs from detected objects
+                    List<Map<String, Object>> roiResults = new ArrayList<>();
+                    boolean anyBlurry = false;
+                    
+                    for (DetectedObject object : objects) {
+                        Rect boundingBox = object.getBoundingBox();
+                        if (boundingBox != null) {
+                            // Crop ROI from original image
+                            Bitmap roi = cropBitmap(bitmap, boundingBox);
+                            if (roi != null) {
+                                // Run TFLite blur detection on ROI
+                                Map<String, Object> roiResult = detectBlurWithTFLiteConfidence(roi, MIN_SHARP_CONFIDENCE_FOR_OBJECT_DETECTION);
+
+                                Log.d(TAG, "Object Detection ROI Result isBlur: " + roiResult.get("isBlur"));
+                                roiResult.put("boundingBox", boundingBox);
+                                roiResults.add(roiResult);
+                                
+                                Boolean isBlur = (Boolean) roiResult.get("isBlur");
+                                if (isBlur != null && isBlur) {
+                                    anyBlurry = true;
+                                }
+                            }
+                        }
+                    }
+                    
+                    result.put("method", "object_detection");
+                    result.put("isBlur", anyBlurry);
+                    result.put("roiResults", roiResults);
+                    result.put("objectCount", objects.size());
+                    return result;
+                }
+            }
+            
+            // Step 2: Text Detection (Fallback if Object Not Found)
+            if (useTextRecognition && textRecognizer != null) {
+                Log.d(TAG, "Step 2: Trying Text Detection");
+                TextRecognitionResult textResult = detectTextWithBoundingBoxes(bitmap);
+                
+                if (textResult.totalWords > 0) {
+                    Log.d(TAG, "Text detected: " + textResult.totalWords + " words");
+                    
+                    // Combine all detected text areas into a single bounding box
+                    List<Rect> topTextAreas = combineAllTextAreas(textResult.boundingBoxes);
+                    
+                    if (!topTextAreas.isEmpty()) {
+                        // Process ROIs from text areas
+                        List<Map<String, Object>> roiResults = processROIsInParallel(bitmap, topTextAreas);
+                        
+                        // Check if any ROI is blurry
+                        boolean anyBlurry = false;
+                        for (Map<String, Object> roiResult : roiResults) {
+                            Boolean isBlur = (Boolean) roiResult.get("isBlur");
+                            if (isBlur != null && isBlur) {
+                                anyBlurry = true;
+                                break;
+                            }
+                        }
+                        
+                        result.put("method", "text_detection");
+                        result.put("isBlur", anyBlurry);
+                        result.put("roiResults", roiResults);
+                        result.put("textConfidence", textResult.averageConfidence);
+                        result.put("wordCount", textResult.totalWords);
+                        result.put("readableWords", textResult.readableWords);
+                        return result;
+                    }
+                }
+            }
+            
+            // Step 3: Full-Image Blur Detection (Final Fallback)
+            Log.d(TAG, "Step 3: Using Full-Image Blur Detection");
+            return detectBlurWithTFLiteConfidence(bitmap, MIN_SHARP_CONFIDENCE_FOR_FULL_IMAGE);
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Error in blur detection pipeline: " + e.getMessage());
+            result.put("isBlur", false);
+            result.put("method", "error");
+            result.put("error", e.getMessage());
+            return result;
+        }
     }
 
     /**
@@ -176,6 +332,9 @@ public class BlurDetectionHelper {
             // Preprocess image for model (resize and potential enhancement)
             inputImageBuffer.load(processedBitmap);
             inputImageBuffer = imageProcessor.process(inputImageBuffer);
+            
+            // Ensure black padding for better accuracy (matches iOS implementation)
+            ensureBlackPadding(inputImageBuffer);
 
             // Get tensor buffer
             ByteBuffer tensorBuffer = inputImageBuffer.getBuffer();
@@ -202,7 +361,7 @@ public class BlurDetectionHelper {
             double sharpConfidence = probabilities.length > 1 ? probabilities[1] : 0.0;
 
             // Determine if image is blurry using TFLite confidence
-            boolean isBlur = (blurConfidence >= 0.99 || sharpConfidence < 0.1);
+            boolean isBlur = sharpConfidence < MIN_SHARP_CONFIDENCE_FOR_FULL_IMAGE;
             
             
             // Return 1.0 for blur, 0.0 for sharp (to maintain double return type)
@@ -266,6 +425,37 @@ public class BlurDetectionHelper {
          normalizedBuffer.rewind();
          return normalizedBuffer;
      }
+
+    /**
+     * Ensure black padding in the processed image buffer for better accuracy
+     * @param tensorImage Processed tensor image
+     */
+    private void ensureBlackPadding(TensorImage tensorImage) {
+        ByteBuffer buffer = tensorImage.getBuffer();
+        DataType dataType = tensorImage.getDataType();
+        
+        if (dataType == DataType.FLOAT32) {
+            // For float32, ensure padding areas are 0.0 (black)
+            FloatBuffer floatBuffer = buffer.asFloatBuffer();
+            int totalPixels = INPUT_SIZE * INPUT_SIZE * 3;
+            
+            // Check if we need to fill with zeros (black)
+            for (int i = 0; i < totalPixels; i++) {
+                if (floatBuffer.get(i) < 0.001f) { // Near zero values
+                    floatBuffer.put(i, 0.0f); // Ensure exact zero (black)
+                }
+            }
+        } else if (dataType == DataType.UINT8) {
+            // For uint8, ensure padding areas are 0 (black)
+            buffer.rewind();
+            while (buffer.hasRemaining()) {
+                byte value = buffer.get();
+                if (value == 0) {
+                    buffer.put(buffer.position() - 1, (byte) 0); // Ensure exact zero
+                }
+            }
+        }
+    }
 
     /**
      * Normalize image buffer from uint8 [0,255] to float32 [0,1]
@@ -339,67 +529,13 @@ public class BlurDetectionHelper {
         return count > 0 ? variance / count : 0.0;
     }
 
-    /**
-     * Detect blur with detailed confidence scores using hybrid approach
-     * @param bitmap Input image bitmap
-     * @return Map with comprehensive blur detection results
-     */
-    public java.util.Map<String, Object> detectBlurWithConfidence(Bitmap bitmap) {
-        java.util.Map<String, Object> result = new java.util.HashMap<>();
-        
-        // Try text recognition first if enabled
-        if (useTextRecognition && textBlurHelper != null && textBlurHelper.isInitialized()) {
-            try {
-                java.util.Map<String, Object> textResult = textBlurHelper.detectBlurWithConfidence(bitmap);
-                Boolean hasText = (Boolean) textResult.get("hasText");
-                
-                if (hasText != null && hasText) {
-                    // Image contains text, use text recognition result
-                    Boolean isBlur = (Boolean) textResult.get("isBlur");
-                    Double textConfidence = (Double) textResult.get("textConfidence");
-                    
-                    result.put("method", "text_recognition");
-                    result.put("isBlur", isBlur);
-                    result.put("textConfidence", textConfidence);
-                    result.put("wordCount", textResult.get("wordCount"));
-                    result.put("readableWords", textResult.get("readableWords"));
-                    result.put("hasText", true);
-                    result.put("boundingBoxes", textResult.get("boundingBoxes"));
-                    
-                    // Set blur/sharp confidence based on text recognition result
-                    if (isBlur != null && textConfidence != null) {
-                        if (isBlur) {
-                            // Image is blurry - high blur confidence, low sharp confidence
-                            result.put("blurConfidence", 1.0);
-                            result.put("sharpConfidence", 0.0);
-                        } else {
-                            // Image is sharp - low blur confidence, high sharp confidence
-                            result.put("blurConfidence", 1.0 - textConfidence);
-                            result.put("sharpConfidence", textConfidence);
-                        }
-                    } else {
-                        // Default values if confidence not available
-                        result.put("blurConfidence", isBlur != null && isBlur ? 1.0 : 0.0);
-                        result.put("sharpConfidence", isBlur != null && !isBlur ? 1.0 : 0.0);
-                    }
-                    
-                    
-                    return result;
-                }
-            } catch (Exception e) {
-            }
-        }
-        
-        // Fallback to TFLite model
-        return detectBlurWithTFLiteConfidence(bitmap);
-    }
 
     /**
      * Detect blur with detailed confidence scores using TFLite only
      * @param bitmap Input image bitmap
      * @return Map with isBlur, blurConfidence, and sharpConfidence
      */
-    public java.util.Map<String, Object> detectBlurWithTFLiteConfidence(Bitmap bitmap) {
+    public java.util.Map<String, Object> detectBlurWithTFLiteConfidence(Bitmap bitmap, double minSharpConfidence) {
         java.util.Map<String, Object> result = new java.util.HashMap<>();
         
         if (!isInitialized || tflite == null) {
@@ -426,6 +562,9 @@ public class BlurDetectionHelper {
             // Preprocess image for model (resize and potential enhancement)
             inputImageBuffer.load(processedBitmap);
             inputImageBuffer = imageProcessor.process(inputImageBuffer);
+            
+            // Ensure black padding for better accuracy (matches iOS implementation)
+            ensureBlackPadding(inputImageBuffer);
 
             // Get tensor buffer
             ByteBuffer tensorBuffer = inputImageBuffer.getBuffer();
@@ -451,11 +590,15 @@ public class BlurDetectionHelper {
             double blurConfidence = probabilities.length > 0 ? probabilities[0] : 0.0;
             double sharpConfidence = probabilities.length > 1 ? probabilities[1] : 0.0;
 
+            Log.d(TAG, "TFLite Blur confidence: " + blurConfidence + " Sharp confidence: " + sharpConfidence);
+
             // Determine if image is blurry using TFLite confidence
-            boolean isBlur = (blurConfidence >= 0.99 || sharpConfidence < 0.1);
+            boolean isBlur = sharpConfidence < minSharpConfidence;
             
+            Log.d(TAG, "TFLite Blur detection isBlur: " + isBlur);
             
             result.put("isBlur", isBlur);
+            result.put("method", "tflite");
             result.put("blurConfidence", blurConfidence);
             result.put("sharpConfidence", sharpConfidence);
             result.put("boundingBoxes", new java.util.ArrayList<>());
@@ -498,40 +641,318 @@ public class BlurDetectionHelper {
         return isBlurry(bitmap) ? 100.0 : 0.0;
     }
 
-    /**
-     * Enable or disable text recognition for blur detection
-     * @param enable true to enable text recognition, false to use only TFLite
-     */
-    public void setTextRecognitionEnabled(boolean enable) {
-        this.useTextRecognition = enable;
-    }
 
     /**
-     * Enable or disable dictionary check in text recognition
-     * @param enable true to enable dictionary check
+     * Detect objects in the image using ML Kit Object Detection
+     * @param bitmap Input image
+     * @return List of detected objects
      */
-    public void setDictionaryCheckEnabled(boolean enable) {
-        if (textBlurHelper != null) {
-            textBlurHelper.setDictionaryCheckEnabled(enable);
+    private List<DetectedObject> detectObjects(Bitmap bitmap) {
+        if (objectDetector == null) {
+            return new ArrayList<>();
+        }
+        
+        InputImage image = InputImage.fromBitmap(bitmap, 0);
+        
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<List<DetectedObject>> resultRef = new AtomicReference<>(new ArrayList<>());
+        
+        objectDetector.process(image)
+            .addOnSuccessListener(detectedObjects -> {
+                resultRef.set(detectedObjects);
+                latch.countDown();
+            })
+            .addOnFailureListener(e -> {
+                Log.e(TAG, "Object detection failed: " + e.getMessage());
+                latch.countDown();
+            });
+        
+        try {
+            latch.await(TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        
+        return resultRef.get();
+    }
+    
+    /**
+     * Detect text in image with bounding boxes
+     * @param bitmap Input image
+     * @return TextRecognitionResult with bounding boxes
+     */
+    private TextRecognitionResult detectTextWithBoundingBoxes(Bitmap bitmap) {
+        if (textRecognizer == null) {
+            return new TextRecognitionResult(false, 0.0, 0, 0, new ArrayList<>());
+        }
+        
+        InputImage image = InputImage.fromBitmap(bitmap, 0);
+        
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<TextRecognitionResult> resultRef = new AtomicReference<>();
+        AtomicBoolean hasError = new AtomicBoolean(false);
+        
+        textRecognizer.process(image)
+            .addOnSuccessListener(visionText -> {
+                try {
+                    TextRecognitionResult result = analyzeTextConfidence(visionText);
+                    resultRef.set(result);
+                } catch (Exception e) {
+                    hasError.set(true);
+                } finally {
+                    latch.countDown();
+                }
+            })
+            .addOnFailureListener(e -> {
+                hasError.set(true);
+                latch.countDown();
+            });
+        
+        try {
+            boolean completed = latch.await(TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            if (!completed || hasError.get()) {
+                return new TextRecognitionResult(false, 0.0, 0, 0, new ArrayList<>());
+            }
+            
+            TextRecognitionResult result = resultRef.get();
+            return result != null ? result : new TextRecognitionResult(false, 0.0, 0, 0, new ArrayList<>());
+            
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return new TextRecognitionResult(false, 0.0, 0, 0, new ArrayList<>());
         }
     }
-
+    
     /**
-     * Check if text recognition is enabled
-     * @return true if text recognition is enabled
+     * Analyze text confidence and extract bounding boxes
+     * @param visionText Recognized text from ML Kit
+     * @return TextRecognitionResult with analysis
      */
-    public boolean isTextRecognitionEnabled() {
-        return useTextRecognition;
+    private TextRecognitionResult analyzeTextConfidence(Text visionText) {
+        int totalWords = 0;
+        int readableWords = 0;
+        double totalConfidence = 0.0;
+        List<Rect> boundingBoxes = new ArrayList<>();
+        
+        for (Text.TextBlock block : visionText.getTextBlocks()) {
+            Rect blockBoundingBox = block.getBoundingBox();
+            if (blockBoundingBox != null) {
+                boundingBoxes.add(blockBoundingBox);
+            }
+            
+            for (Text.Line line : block.getLines()) {
+                for (Text.Element element : line.getElements()) {
+                    String text = element.getText().trim();
+                    if (!text.isEmpty()) {
+                        totalWords++;
+                        
+                        // Estimate word confidence
+                        double confidence = estimateWordConfidence(element, text);
+                        totalConfidence += confidence;
+                        
+                        if (confidence >= MIN_WORD_CONFIDENCE) {
+                            if (!useDictionaryCheck || isInDictionary(text)) {
+                                readableWords++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        double averageConfidence = totalWords > 0 ? totalConfidence / totalWords : 0.0;
+        
+        // Image is readable if we have text and sufficient readable words or high confidence
+        boolean isReadable = totalWords > 0 && 
+                           (readableWords >= Math.max(1, totalWords * AT_LEAST_N_PERCENT_OF_WORDS_ARE_READABLE) || 
+                            averageConfidence >= AT_LEAST_N_PERCENT_OF_AVERAGE_CONFIDENCE);
+        
+        return new TextRecognitionResult(isReadable, averageConfidence, totalWords, readableWords, boundingBoxes);
     }
-
+    
     /**
-     * Get text recognition helper instance
-     * @return TextRecognitionBlurHelper instance
+     * Combine all detected text areas into a single bounding box
+     * @param boundingBoxes List of bounding boxes
+     * @return List containing a single combined bounding box
      */
-    public TextRecognitionBlurHelper getTextBlurHelper() {
-        return textBlurHelper;
-    }
+    private List<Rect> combineAllTextAreas(List<Rect> boundingBoxes) {
+        if (boundingBoxes.isEmpty()) {
+            return new ArrayList<>();
+        }
+        
+        // Find the minimum and maximum coordinates across all boxes
+        int minLeft = Integer.MAX_VALUE;
+        int minTop = Integer.MAX_VALUE;
+        int maxRight = Integer.MIN_VALUE;
+        int maxBottom = Integer.MIN_VALUE;
+        
+        for (Rect rect : boundingBoxes) {
+            if (rect == null) continue;
+            minLeft = Math.min(minLeft, rect.left);
+            minTop = Math.min(minTop, rect.top);
+            maxRight = Math.max(maxRight, rect.right);
+            maxBottom = Math.max(maxBottom, rect.bottom);
+        }
+        
+        if (minLeft == Integer.MAX_VALUE) {
+            return new ArrayList<>();
+        }
+        
+        Rect combinedRect = new Rect(minLeft, minTop, maxRight, maxBottom);
+        
+        Log.d(TAG, "Combined " + boundingBoxes.size() + " text areas into single bounding box: " +
+                "(" + minLeft + ", " + minTop + ", " + maxRight + ", " + maxBottom + ")");
 
+        // Minimum width and height
+        int minWidth = 100;
+        int minHeight = 20;
+        if (combinedRect.width() < minWidth || combinedRect.height() < minHeight) {
+            return new ArrayList<>();
+        }
+        
+        List<Rect> result = new ArrayList<>();
+        result.add(combinedRect);
+        return result;
+    }
+    
+    /**
+     * Process multiple ROIs in parallel for blur detection
+     * @param bitmap Original bitmap
+     * @param rois List of regions of interest
+     * @return List of blur detection results for each ROI
+     */
+    private List<Map<String, Object>> processROIsInParallel(Bitmap bitmap, List<Rect> rois) {
+        List<Map<String, Object>> results = Collections.synchronizedList(new ArrayList<>());
+        CountDownLatch latch = new CountDownLatch(rois.size());
+        
+        for (Rect roi : rois) {
+            executorService.execute(() -> {
+                try {
+                    Bitmap cropped = cropBitmap(bitmap, roi);
+                    if (cropped != null) {
+                        Map<String, Object> result = detectBlurWithTFLiteConfidence(cropped, MIN_SHARP_CONFIDENCE_FOR_TEXT_DETECTION);
+                        result.put("boundingBox", roi);
+                        results.add(result);
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "Error processing ROI: " + e.getMessage());
+                } finally {
+                    latch.countDown();
+                }
+            });
+        }
+        
+        try {
+            latch.await(TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        
+        return results;
+    }
+    
+    /**
+     * Crop a bitmap to the specified bounding box
+     * @param source Source bitmap
+     * @param rect Bounding box to crop
+     * @return Cropped bitmap or null if invalid
+     */
+    private Bitmap cropBitmap(Bitmap source, Rect rect) {
+        try {
+            // Ensure bounds are within image
+            int left = Math.max(0, rect.left);
+            int top = Math.max(0, rect.top);
+            int right = Math.min(source.getWidth(), rect.right);
+            int bottom = Math.min(source.getHeight(), rect.bottom);
+            
+            int width = right - left;
+            int height = bottom - top;
+            
+            if (width > 0 && height > 0) {
+                return Bitmap.createBitmap(source, left, top, width, height);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error cropping bitmap: " + e.getMessage());
+        }
+        return null;
+    }
+    
+    /**
+     * Estimate word confidence based on element properties
+     * @param element Text element from ML Kit
+     * @param text The actual text content
+     * @return Estimated confidence score
+     */
+    private double estimateWordConfidence(Text.Element element, String text) {
+        double confidence = 0.55; // Base confidence
+        
+        // Text length check
+        if (text.length() >= 3 && text.length() <= 15) {
+            confidence += 0.2;
+        }
+        
+        // Common patterns check
+        if (text.matches("[a-zA-Z0-9\\s\\-\\.]+")) {
+            confidence += 0.15;
+        }
+        
+        // Mixed case check
+        if (text.matches(".*[a-z].*") && text.matches(".*[A-Z].*")) {
+            confidence += 0.1;
+        }
+        
+        // Numbers check
+        if (text.matches(".*\\d.*")) {
+            confidence += 0.1;
+        }
+        
+        // Special characters penalty
+        if (text.matches(".*[^a-zA-Z0-9\\s\\-\\.].*")) {
+            confidence -= 0.1;
+        }
+        
+        return Math.max(0.0, Math.min(1.0, confidence));
+    }
+    
+    /**
+     * Check if word is in common dictionary
+     * @param word Word to check
+     * @return true if word is in dictionary
+     */
+    private boolean isInDictionary(String word) {
+        if (commonWords == null || word == null) {
+            return false;
+        }
+        
+        String cleanWord = word.toLowerCase().replaceAll("[^a-zA-Z]", "");
+        return commonWords.contains(cleanWord);
+    }
+    
+    /**
+     * Initialize common English words for dictionary check
+     */
+    private void initializeCommonWords() {
+        commonWords = new HashSet<>();
+        
+        // Add common English words
+        String[] words = {
+            "the", "be", "to", "of", "and", "a", "in", "that", "have", "i", "it", "for", "not", "on", "with",
+            "he", "as", "you", "do", "at", "this", "but", "his", "by", "from", "they", "we", "say", "her",
+            "she", "or", "an", "will", "my", "one", "all", "would", "there", "their", "what", "so", "up",
+            "out", "if", "about", "who", "get", "which", "go", "me", "when", "make", "can", "like", "time",
+            "no", "just", "him", "know", "take", "people", "into", "year", "your", "good", "some", "could",
+            "them", "see", "other", "than", "then", "now", "look", "only", "come", "its", "over", "think",
+            "also", "back", "after", "use", "two", "how", "our", "work", "first", "well", "way", "even",
+            "new", "want", "because", "any", "these", "give", "day", "most", "us", "is", "was", "are",
+            "were", "been", "has", "had", "having", "does", "did", "doing", "can", "could", "should",
+            "would", "may", "might", "must", "shall", "will", "am", "being", "became", "become", "becomes"
+        };
+        
+        for (String word : words) {
+            commonWords.add(word);
+        }
+    }
+    
     /**
      * Clean up resources
      */
@@ -540,19 +961,69 @@ public class BlurDetectionHelper {
             tflite.close();
             tflite = null;
         }
-        if (textBlurHelper != null) {
-            textBlurHelper.close();
-            textBlurHelper = null;
+        if (objectDetector != null) {
+            objectDetector.close();
+            objectDetector = null;
+        }
+        if (textRecognizer != null) {
+            textRecognizer.close();
+            textRecognizer = null;
+        }
+        if (executorService != null) {
+            executorService.shutdown();
+            executorService = null;
         }
         isInitialized = false;
     }
 
     /**
-     * Check if TFLite model is properly initialized
+     * Check if blur detector is properly initialized
      */
     public boolean isInitialized() {
         return isInitialized;
     }
+    
+    /**
+     * Enable or disable object detection
+     * @param enable true to enable object detection
+     */
+    public void setObjectDetectionEnabled(boolean enable) {
+        this.useObjectDetection = enable;
+    }
+    
+    /**
+     * Enable or disable text recognition
+     * @param enable true to enable text recognition
+     */
+    public void setTextRecognitionEnabled(boolean enable) {
+        this.useTextRecognition = enable;
+    }
+    
+    /**
+     * Enable or disable dictionary check in text recognition
+     * @param enable true to enable dictionary check
+     */
+    public void setDictionaryCheckEnabled(boolean enable) {
+        this.useDictionaryCheck = enable;
+    }
+    
+    /**
+     * Result class for text recognition analysis
+     */
+    private static class TextRecognitionResult {
+        final boolean isReadable;
+        final double averageConfidence;
+        final int totalWords;
+        final int readableWords;
+        final List<Rect> boundingBoxes;
 
-
+        TextRecognitionResult(boolean isReadable, double averageConfidence, int totalWords, 
+                            int readableWords, List<Rect> boundingBoxes) {
+            this.isReadable = isReadable;
+            this.averageConfidence = averageConfidence;
+            this.totalWords = totalWords;
+            this.readableWords = readableWords;
+            this.boundingBoxes = boundingBoxes;
+        }
+    }
 } 
