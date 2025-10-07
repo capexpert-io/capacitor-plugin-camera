@@ -730,8 +730,8 @@ class BlurDetectionHelper {
         let combinedRect = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
 
         // Minimum width and height
-        let minWidth = 100
-        let minHeight = 40
+        let minWidth = 100.0
+        let minHeight = 40.0
         if combinedRect.width < minWidth || combinedRect.height < minHeight {
             return []
         }
