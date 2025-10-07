@@ -805,7 +805,7 @@ public class BlurDetectionHelper {
 
         // Minimum width and height
         int minWidth = 100;
-        int minHeight = 20;
+        int minHeight = 40;
         if (combinedRect.width() < minWidth || combinedRect.height() < minHeight) {
             return new ArrayList<>();
         }

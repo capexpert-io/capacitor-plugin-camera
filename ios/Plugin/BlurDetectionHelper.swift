@@ -728,6 +728,13 @@ class BlurDetectionHelper {
         }
         
         let combinedRect = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+
+        // Minimum width and height
+        let minWidth = 100
+        let minHeight = 40
+        if combinedRect.width < minWidth || combinedRect.height < minHeight {
+            return []
+        }
         
         print("\(Self.TAG): Combined \(rects.count) text areas into single bounding box: " +
               "(\(minX), \(minY), \(maxX), \(maxY))")
