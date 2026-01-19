@@ -1459,83 +1459,83 @@ public class CameraPreviewPlugin extends Plugin {
             }
 
             // Use the new 3-step pipeline confidence detection method
-            if (blurDetectionHelper != null && blurDetectionHelper.isInitialized()) {
-                java.util.Map<String, Object> result = blurDetectionHelper.detectBlurWithConfidence(bitmap);
+            // if (blurDetectionHelper != null && blurDetectionHelper.isInitialized()) {
+            //     java.util.Map<String, Object> result = blurDetectionHelper.detectBlurWithConfidence(bitmap);
 
-                JSObject jsResult = new JSObject();
-                jsResult.put("isBlur", result.get("isBlur"));
-                jsResult.put("method", result.get("method"));
+            //     JSObject jsResult = new JSObject();
+            //     jsResult.put("isBlur", result.get("isBlur"));
+            //     jsResult.put("method", result.get("method"));
 
-                // Handle different confidence values based on detection method
-                String method = (String) result.get("method");
-                Double blurConfidence = (Double) result.get("blurConfidence");
-                Double sharpConfidence = (Double) result.get("sharpConfidence");
-                Double textConfidence = (Double) result.get("textConfidence");
+            //     // Handle different confidence values based on detection method
+            //     String method = (String) result.get("method");
+            //     Double blurConfidence = (Double) result.get("blurConfidence");
+            //     Double sharpConfidence = (Double) result.get("sharpConfidence");
+            //     Double textConfidence = (Double) result.get("textConfidence");
 
-                if ("text_detection".equals(method) && textConfidence != null) {
-                    // For text detection, use text confidence as sharp confidence
-                    jsResult.put("sharpConfidence", textConfidence);
-                    jsResult.put("blurConfidence", 1.0 - textConfidence);
-                } else if ("tflite".equals(method) && sharpConfidence != null) {
-                    // For TFLite model, use the provided confidence values
-                    jsResult.put("sharpConfidence", sharpConfidence);
-                    jsResult.put("blurConfidence", blurConfidence != null ? blurConfidence : (1.0 - sharpConfidence));
-                } else if ("laplacian".equals(method) && sharpConfidence != null) {
-                    // For Laplacian fallback, use the provided confidence values
-                    jsResult.put("sharpConfidence", sharpConfidence);
-                    jsResult.put("blurConfidence", blurConfidence != null ? blurConfidence : (1.0 - sharpConfidence));
-                } else if (sharpConfidence != null) {
-                    // Generic fallback for any method with sharp confidence
-                    jsResult.put("sharpConfidence", sharpConfidence);
-                    jsResult.put("blurConfidence", blurConfidence != null ? blurConfidence : (1.0 - sharpConfidence));
-                } else if (blurConfidence != null) {
-                    // Fallback if only blur confidence is available
-                    jsResult.put("blurConfidence", blurConfidence);
-                    jsResult.put("sharpConfidence", 1.0 - blurConfidence);
-                } else {
-                    // Final fallback values
-                    Boolean isBlur = (Boolean) result.get("isBlur");
-                    if (isBlur != null) {
-                        jsResult.put("blurConfidence", isBlur ? 1.0 : 0.0);
-                        jsResult.put("sharpConfidence", isBlur ? 0.0 : 1.0);
-                    } else {
-                        jsResult.put("blurConfidence", 0.0);
-                        jsResult.put("sharpConfidence", 0.0);
-                    }
-                }
+            //     if ("text_detection".equals(method) && textConfidence != null) {
+            //         // For text detection, use text confidence as sharp confidence
+            //         jsResult.put("sharpConfidence", textConfidence);
+            //         jsResult.put("blurConfidence", 1.0 - textConfidence);
+            //     } else if ("tflite".equals(method) && sharpConfidence != null) {
+            //         // For TFLite model, use the provided confidence values
+            //         jsResult.put("sharpConfidence", sharpConfidence);
+            //         jsResult.put("blurConfidence", blurConfidence != null ? blurConfidence : (1.0 - sharpConfidence));
+            //     } else if ("laplacian".equals(method) && sharpConfidence != null) {
+            //         // For Laplacian fallback, use the provided confidence values
+            //         jsResult.put("sharpConfidence", sharpConfidence);
+            //         jsResult.put("blurConfidence", blurConfidence != null ? blurConfidence : (1.0 - sharpConfidence));
+            //     } else if (sharpConfidence != null) {
+            //         // Generic fallback for any method with sharp confidence
+            //         jsResult.put("sharpConfidence", sharpConfidence);
+            //         jsResult.put("blurConfidence", blurConfidence != null ? blurConfidence : (1.0 - sharpConfidence));
+            //     } else if (blurConfidence != null) {
+            //         // Fallback if only blur confidence is available
+            //         jsResult.put("blurConfidence", blurConfidence);
+            //         jsResult.put("sharpConfidence", 1.0 - blurConfidence);
+            //     } else {
+            //         // Final fallback values
+            //         Boolean isBlur = (Boolean) result.get("isBlur");
+            //         if (isBlur != null) {
+            //             jsResult.put("blurConfidence", isBlur ? 1.0 : 0.0);
+            //             jsResult.put("sharpConfidence", isBlur ? 0.0 : 1.0);
+            //         } else {
+            //             jsResult.put("blurConfidence", 0.0);
+            //             jsResult.put("sharpConfidence", 0.0);
+            //         }
+            //     }
 
-                // Add additional information if available
-                if (result.containsKey("roiResults")) {
-                    @SuppressWarnings("unchecked")
-                    List<Map<String, Object>> roiResults = (List<Map<String, Object>>) result.get("roiResults");
-                    List<List<Double>> boundingBoxes = new ArrayList<>();
+            //     // Add additional information if available
+            //     if (result.containsKey("roiResults")) {
+            //         @SuppressWarnings("unchecked")
+            //         List<Map<String, Object>> roiResults = (List<Map<String, Object>>) result.get("roiResults");
+            //         List<List<Double>> boundingBoxes = new ArrayList<>();
                     
-                    for (Map<String, Object> roi : roiResults) {
-                        Object boundingBoxObj = roi.get("boundingBox");
-                        if (boundingBoxObj instanceof android.graphics.Rect) {
-                            android.graphics.Rect rect = (android.graphics.Rect) boundingBoxObj;
-                            List<Double> box = new ArrayList<>();
-                            box.add((double) rect.left);
-                            box.add((double) rect.top);
-                            box.add((double) rect.right);
-                            box.add((double) rect.bottom);
-                            boundingBoxes.add(box);
-                        }
-                    }
-                    jsResult.put("boundingBoxes", boundingBoxes);
-                }
-                if (result.containsKey("objectCount")) {
-                    jsResult.put("objectCount", result.get("objectCount"));
-                }
-                if (result.containsKey("wordCount")) {
-                    jsResult.put("wordCount", result.get("wordCount"));
-                }
-                if (result.containsKey("readableWords")) {
-                    jsResult.put("readableWords", result.get("readableWords"));
-                }
+            //         for (Map<String, Object> roi : roiResults) {
+            //             Object boundingBoxObj = roi.get("boundingBox");
+            //             if (boundingBoxObj instanceof android.graphics.Rect) {
+            //                 android.graphics.Rect rect = (android.graphics.Rect) boundingBoxObj;
+            //                 List<Double> box = new ArrayList<>();
+            //                 box.add((double) rect.left);
+            //                 box.add((double) rect.top);
+            //                 box.add((double) rect.right);
+            //                 box.add((double) rect.bottom);
+            //                 boundingBoxes.add(box);
+            //             }
+            //         }
+            //         jsResult.put("boundingBoxes", boundingBoxes);
+            //     }
+            //     if (result.containsKey("objectCount")) {
+            //         jsResult.put("objectCount", result.get("objectCount"));
+            //     }
+            //     if (result.containsKey("wordCount")) {
+            //         jsResult.put("wordCount", result.get("wordCount"));
+            //     }
+            //     if (result.containsKey("readableWords")) {
+            //         jsResult.put("readableWords", result.get("readableWords"));
+            //     }
 
-                call.resolve(jsResult);
-            } else {
+            //     call.resolve(jsResult);
+            // } else {
                 // Fallback to Laplacian algorithm with confidence scores
                 double laplacianScore = calculateLaplacianBlurScore(bitmap);
                 boolean isBlur = laplacianScore < 150;
@@ -1550,7 +1550,7 @@ public class CameraPreviewPlugin extends Plugin {
                 result.put("method", "laplacian_fallback");
 
                 call.resolve(result);
-            }
+            // }
 
         } catch (Exception e) {
             call.reject("Failed to process image: " + e.getMessage());
