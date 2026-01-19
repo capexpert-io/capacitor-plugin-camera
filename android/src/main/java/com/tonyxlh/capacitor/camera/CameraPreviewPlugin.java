@@ -115,7 +115,8 @@ public class CameraPreviewPlugin extends Plugin {
 
     // Store the desired JPEG quality, set during initialization
     private int desiredJpegQuality = 95; // Default to high quality
-    private BlurDetectionHelper blurDetectionHelper; // TFLite blur detection
+    // private BlurDetectionHelper blurDetectionHelper; // TFLite blur detection - REMOVED
+
 
     @PluginMethod
     public void initialize(PluginCall call) {
@@ -142,9 +143,10 @@ public class CameraPreviewPlugin extends Plugin {
             exec = Executors.newSingleThreadExecutor();
             cameraProviderFuture = ProcessCameraProvider.getInstance(getContext());
 
-            // Initialize TFLite blur detection helper
-            blurDetectionHelper = new BlurDetectionHelper();
-            boolean tfliteInitialized = blurDetectionHelper.initialize(getContext());
+            // Initialize TFLite blur detection helper - REMOVED
+            // blurDetectionHelper = new BlurDetectionHelper();
+            // boolean tfliteInitialized = blurDetectionHelper.initialize(getContext());
+
 
             cameraProviderFuture.addListener(() -> {
             try {
@@ -222,7 +224,11 @@ public class CameraPreviewPlugin extends Plugin {
                         // Only detect blur if checkBlur option is true
                         boolean shouldCheckBlur = takeSnapshotCall.getBoolean("checkBlur", false);
                         if (shouldCheckBlur) {
-                            // Get blur detection result with bounding boxes in one call
+                            Log.d("Camera", "Blur detection disabled/removed");
+                            result.put("isBlur", false);
+                            result.put("confidence", 0.0);
+                             // Get blur detection result with bounding boxes in one call
+                            /* REMOVED BlurDetectionHelper usage
                             if (blurDetectionHelper != null && blurDetectionHelper.isInitialized()) {
                                 java.util.Map<String, Object> blurResult = blurDetectionHelper.detectBlurWithConfidence(bitmap);
 
@@ -286,7 +292,9 @@ public class CameraPreviewPlugin extends Plugin {
                                 result.put("boundingBoxes", new java.util.ArrayList<>());
                                 result.put("detectionMethod", "laplacian_fallback");
                             }
+                            */
                         } else {
+
                             Log.d("Camera", "Blur detection disabled for performance");
                         }
 
@@ -1569,13 +1577,15 @@ public class CameraPreviewPlugin extends Plugin {
         if (bitmap == null) return false;
 
         // Use TFLite model if available, otherwise fallback to Laplacian
-        if (blurDetectionHelper != null && blurDetectionHelper.isInitialized()) {
-            return blurDetectionHelper.isBlurry(bitmap);
-        } else {
+        // Use TFLite model if available, otherwise fallback to Laplacian
+        // if (blurDetectionHelper != null && blurDetectionHelper.isInitialized()) {
+        //    return blurDetectionHelper.isBlurry(bitmap);
+        //} else {
             // Fallback to original Laplacian algorithm
             double laplacianScore = calculateLaplacianBlurScore(bitmap);
             return laplacianScore < 50;
-        }
+        //}
+
     }
 
     /**
@@ -1585,6 +1595,8 @@ public class CameraPreviewPlugin extends Plugin {
         if (bitmap == null) return 0.0;
 
         // Use the new 3-step pipeline blur detection
+        // Use the new 3-step pipeline blur detection - DISABLED
+        /*
         if (blurDetectionHelper != null && blurDetectionHelper.isInitialized()) {
             java.util.Map<String, Object> result = blurDetectionHelper.detectBlurWithConfidence(bitmap);
             String method = (String) result.get("method");
@@ -1637,11 +1649,13 @@ public class CameraPreviewPlugin extends Plugin {
 
             return 0.0;
         } else {
+        */
             // Fallback to Laplacian algorithm with confidence calculation
             double laplacianScore = calculateLaplacianBlurScore(bitmap);
             // Normalize to 0-1 range (higher score = sharper image)
             return Math.max(0.0, Math.min(1.0, laplacianScore / 300.0));
-        }
+        //}
+
     }
 
     /**
