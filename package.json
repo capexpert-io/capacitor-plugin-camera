@@ -1,6 +1,6 @@
 {
   "name": "capacitor-plugin-camera-forked",
-  "version": "3.1.133",
+  "version": "3.1.134",
   "description": "A capacitor camera plugin - A custom Capacitor camera plugin with additional features.",
   "main": "dist/plugin.cjs.js",
   "module": "dist/esm/index.js",
